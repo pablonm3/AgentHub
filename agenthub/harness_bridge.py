@@ -25,7 +25,8 @@ from harness.orchestrator import pending_question
 
 from .db import now_iso
 from .sessions import clean_env
-from .tasks import TOKEN_COLS, TOKEN_KEYS, TaskError, ticket_key
+from .errors import HubError
+from .tasks import TOKENS, ticket_key, token_assignments
 
 if TYPE_CHECKING:
     from .hub import Hub
@@ -33,12 +34,12 @@ if TYPE_CHECKING:
 log = logging.getLogger("agenthub.harness")
 
 STATE_WAIT_S = 60
+# a run file named in a text: a versioned `_v<k>.md`, a `<name>_<feature>_<n>.md`, or any .md/.csv/.html
 FILE_REF_RE = re.compile(r"[\w./-]*?([\w.-]+_v\d+\.md|[\w.-]+_[\w-]+_\d+\.md|[\w.-]+\.(?:md|csv|html))")
 
 
-class BridgeRefused(TaskError):
-    def __init__(self, message: str, status: int = 409):
-        super().__init__(message, status)
+class BridgeRefused(HubError):
+    pass
 
 
 class HarnessBridge:
@@ -71,14 +72,7 @@ class HarnessBridge:
             run_id = make_run_id(feature, next_run_number(self.layout, feature))
             console = console_dir / f"{run_id}.log"
             proc = self._spawn(["run", workflow, feature, "--quiet"], task, console)
-            state = self.layout.state_file(run_id)
-            deadline = time.monotonic() + STATE_WAIT_S
-            while not state.exists():
-                if proc.poll() is not None or time.monotonic() > deadline:
-                    if proc.poll() is None:
-                        _signal_group(proc.pid, signal.SIGTERM)
-                    raise BridgeRefused(f"the run did not start: {_tail(console)}", 500)
-                time.sleep(0.1)
+            self._wait_for_state_file(proc, run_id, console)
             self.db.run(
                 "INSERT INTO harness_runs (run_id, task_id, workflow, feature, project, status, pid, started_at)"
                 " VALUES (?, ?, ?, ?, ?, 'running', ?, ?)",
@@ -89,6 +83,18 @@ class HarnessBridge:
         self._watch_in_background(run_id)
         self.hub.events.publish("tasks", task["id"])
         return run_id
+
+    def _wait_for_state_file(self, proc: subprocess.Popen, run_id: str, console: Path) -> None:
+        """Wait until the new run has written its state.json; refuse when it exits or takes too long."""
+        state = self.layout.state_file(run_id)
+        deadline = time.monotonic() + STATE_WAIT_S
+        while not state.exists():
+            exited = proc.poll() is not None
+            if exited or time.monotonic() > deadline:
+                if not exited:
+                    _signal_group(proc.pid, signal.SIGTERM)
+                raise BridgeRefused(f"the run did not start: {_tail(console)}", 500)
+            time.sleep(0.1)
 
     def _project_for(self, task: dict, project: str | None) -> str:
         """A ticket's task runs on the ticket's project; a task without a ticket names a registered one (AC27, AC40)."""
@@ -175,14 +181,15 @@ class HarnessBridge:
         state = self._read_state(run_id)
         if state is None:
             return False
-        totals = {k: 0 for k in TOKEN_KEYS}
+        totals = {k: 0 for k in TOKENS}
         for exe in state.get("executions") or []:
-            for k in TOKEN_KEYS:
+            for k in TOKENS:
                 totals[k] += int((exe.get("tokens") or {}).get(k) or 0)
+        values = [totals[k] for k in TOKENS]
+        any_differs = " OR ".join(f"{c} <> ?" for c in TOKENS.values())
         changed = self.db.run(
-            "UPDATE harness_runs SET " + ", ".join(f"{c} = ?" for c in TOKEN_COLS) + " WHERE run_id = ? AND ("
-            + " OR ".join(f"{c} <> ?" for c in TOKEN_COLS) + ")",
-            (*[totals[k] for k in TOKEN_KEYS], run_id, *[totals[k] for k in TOKEN_KEYS]),
+            f"UPDATE harness_runs SET {token_assignments()} WHERE run_id = ? AND ({any_differs})",
+            (*values, run_id, *values),
         )
         if changed:
             task_id = self.db.value("SELECT task_id FROM harness_runs WHERE run_id = ?", (run_id,))
@@ -192,19 +199,18 @@ class HarnessBridge:
     def _on_exit(self, run_id: str) -> None:
         row = self.db.one("SELECT * FROM harness_runs WHERE run_id = ?", (run_id,))
         state = self._read_state(run_id) or {}
-        status = state.get("status") or "failed"
+        state_status = state.get("status") or "failed"
+        status = "stopped" if row["status"] == "stopped" else state_status  # a run Pablo stopped stays stopped
         task_id = row["task_id"]
         task = self.hub.tasks.get(task_id)
         pending = pending_question(self.layout, run_id) if status == "paused" else None
         self.db.run(
             "UPDATE harness_runs SET status = ?, pid = NULL, ended_at = ? WHERE run_id = ?",
-            (status, now_iso() if status in ("done", "failed", "blocked") else None, run_id),
+            (status, now_iso() if state_status in ("done", "failed", "blocked") else None, run_id),
         )
         if task is None or task["status"] == "archived":
             return
-        if row["status"] == "stopped":
-            self.db.run("UPDATE harness_runs SET status = 'stopped' WHERE run_id = ?", (run_id,))
-        elif pending and pending.get("kind") == "gate":
+        if pending and pending.get("kind") == "gate":
             self._post_gate(task, run_id, pending)
         elif pending:
             self.db.run(
@@ -288,9 +294,7 @@ class HarnessBridge:
     def _newest_file(run_dir: Path, base_name: str) -> Path | None:
         stem, ext = os.path.splitext(base_name)
         found = [p for p in run_dir.glob(f"{stem}*{ext}") if re.fullmatch(re.escape(stem) + r"(_v\d+)?" + re.escape(ext), p.name)]
-        if not found:
-            return None
-        return max(found, key=lambda p: int((re.search(r"_v(\d+)" + re.escape(ext) + "$", p.name) or [0, 1])[1]))
+        return max(found, key=_version) if found else None
 
     # ================================================================ while a gate is pending
     def pending_gate(self, task_id: int) -> dict | None:
@@ -334,18 +338,7 @@ class HarnessBridge:
                     f"the decision file {decision} does not say `answered: true` yet: record the answer first"
                 )
             if pending["kind"] == "gate":
-                replies = self.db.all(
-                    "SELECT text FROM task_events WHERE task_id = ? AND kind = 'user' AND turn_id IS NOT NULL"
-                    " AND created_at >= ? ORDER BY id",
-                    (task["id"], row["pending_posted_at"] or ""),
-                )
-                if not replies:
-                    raise BridgeRefused(
-                        f"run {run_id} waits at a gate: only Pablo's reply releases it, and he has not replied since it was posted"
-                    )
-                with open(decision, "a") as f:
-                    f.write("\n## Human reply (verbatim)\n\n" + "\n\n".join(r["text"].strip() for r in replies) + "\n")
-                extra["HARNESS_GATE_RELEASE"] = decision.name
+                extra = self._release_gate(task, row, decision)
             else:
                 answer = decision.read_text().split("## Answer", 1)[-1].strip()
                 self.hub.tasks.add_event(task["id"], "notice", f"Answer recorded for run {run_id}:\n\n{answer}")
@@ -362,6 +355,22 @@ class HarnessBridge:
         self._watch_in_background(run_id)
         return run_id
 
+    def _release_gate(self, task: dict, row: dict, decision: Path) -> dict[str, str]:
+        """Append Pablo's replies since the gate was posted to its decision file; the extra env that releases it."""
+        run_id = row["run_id"]
+        replies = self.db.all(
+            "SELECT text FROM task_events WHERE task_id = ? AND kind = 'user' AND turn_id IS NOT NULL"
+            " AND created_at >= ? ORDER BY id",
+            (task["id"], row["pending_posted_at"] or ""),
+        )
+        if not replies:
+            raise BridgeRefused(
+                f"run {run_id} waits at a gate: only Pablo's reply releases it, and he has not replied since it was posted"
+            )
+        with open(decision, "a") as f:
+            f.write("\n## Human reply (verbatim)\n\n" + "\n\n".join(r["text"].strip() for r in replies) + "\n")
+        return {"HARNESS_GATE_RELEASE": decision.name}
+
     # ================================================================ status, stop, recovery
     def status(self, task: dict) -> list[dict]:
         out = []
@@ -371,7 +380,7 @@ class HarnessBridge:
                 "run_id": r["run_id"], "project": r["project"], "workflow": r["workflow"], "status": r["status"],
                 "current_step": state.get("current"), "pending_kind": r["pending_kind"],
                 "decision_file": r["pending_decision_file"], "run_dir": str(self.layout.run_dir(r["run_id"])),
-                "tokens": sum(int(r[c] or 0) for c in TOKEN_COLS),
+                "tokens": sum(int(r[c] or 0) for c in TOKENS.values()),
             })
         return out
 
@@ -436,3 +445,9 @@ def _tail(path: Path, n: int = 8) -> str:
         return " | ".join(path.read_text().strip().splitlines()[-n:]) or "no output"
     except OSError:
         return "no output"
+
+
+def _version(path: Path) -> int:
+    """The `_v<k>` suffix of a run file; an unversioned file counts as v1."""
+    m = re.search(r"_v(\d+)\.\w+$", path.name)
+    return int(m.group(1)) if m else 1

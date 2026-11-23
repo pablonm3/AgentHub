@@ -14,7 +14,9 @@ from string import Template
 from typing import TYPE_CHECKING
 
 from .db import now_iso
-from .tasks import TaskError, ticket_key
+from .config import check_model
+from .errors import HubError
+from .tasks import ticket_key
 
 if TYPE_CHECKING:
     from .hub import Hub
@@ -46,7 +48,7 @@ class Tickets:
     def get(self, ticket_id: int) -> dict:
         row = self.db.one("SELECT * FROM tickets WHERE id = ?", (ticket_id,))
         if row is None:
-            raise TaskError(f"ticket {ticket_id} not found", 404)
+            raise HubError(f"ticket {ticket_id} not found", 404)
         return row
 
     def _view(self, row: dict) -> dict:
@@ -98,28 +100,16 @@ class Tickets:
         """Create a ticket; a new project is registered before the ticket and its task exist (AC39, AC43)."""
         title = str(data.get("title") or "").strip()
         if not title:
-            raise TaskError("a ticket needs a title", 422)
+            raise HubError("a ticket needs a title", 422)
         stage = data.get("stage") or STAGE_IDS[0]
         if stage not in STAGE_IDS:
-            raise TaskError(f"unknown stage {stage!r}", 422)
+            raise HubError(f"unknown stage {stage!r}", 422)
         assignee = self.db.user(str(data.get("assignee_id") or "pablo"))
         if assignee is None:
-            raise TaskError("unknown assignee", 422)
+            raise HubError("unknown assignee", 422)
         model = data.get("model") or self.db.setting("default_model")
-        if model not in self.hub.config.models:
-            raise TaskError(f"unknown model {model!r}", 422)
-        has_project, has_new = "project" in data, data.get("new_project") is not None
-        if has_project == has_new:
-            raise TaskError("choose exactly one of a registered project, \"No project\" (project: null) or a new project", 422)
-        warning = None
-        if has_new:
-            new = data["new_project"] or {}
-            project, warning = self.hub.projects.register(str(new.get("name") or ""), new.get("repo_url"))
-            project_name = project["name"]
-        else:
-            project_name = data["project"]
-            if project_name is not None and self.hub.projects.get(project_name) is None:
-                raise TaskError(f"no project named {project_name!r} is registered", 422)
+        check_model(self.hub.config, model)
+        project_name, warning = self._resolve_project(data)
         now = now_iso()
         position = (self.db.value("SELECT MAX(position) FROM tickets WHERE stage = ?", (stage,)) or 0) + 1
         ticket_id = self.db.run(
@@ -133,32 +123,46 @@ class Tickets:
             self.hand_over(self.get(ticket_id), assignee)
         return self.detail(ticket_id), warning
 
+    def _resolve_project(self, data: dict) -> tuple[str | None, str | None]:
+        """The ticket's project name and a registration warning; registers a new project first."""
+        # exactly one of: "project" (a registered name, or null for "No project") or "new_project"
+        has_project, has_new = "project" in data, data.get("new_project") is not None
+        if has_project == has_new:
+            raise HubError("choose exactly one of a registered project, \"No project\" (project: null) or a new project", 422)
+        if has_new:
+            new = data["new_project"] or {}
+            project, warning = self.hub.projects.register(str(new.get("name") or ""), new.get("repo_url"))
+            return project["name"], warning
+        project_name = data["project"]
+        if project_name is not None and self.hub.projects.get(project_name) is None:
+            raise HubError(f"no project named {project_name!r} is registered", 422)
+        return project_name, None
+
     def update(self, ticket_id: int, data: dict) -> dict:
         ticket = self.get(ticket_id)
         if "project" in data or "new_project" in data:
-            raise TaskError("a ticket's project is fixed once the ticket exists", 422)
+            raise HubError("a ticket's project is fixed once the ticket exists", 422)
         fields: dict = {}
         if "title" in data:
             if not str(data["title"] or "").strip():
-                raise TaskError("a ticket needs a title", 422)
+                raise HubError("a ticket needs a title", 422)
             fields["title"] = str(data["title"]).strip()
         if "description" in data:
             fields["description"] = str(data["description"] or "")
         if "stage" in data:
             if data["stage"] not in STAGE_IDS:
-                raise TaskError(f"unknown stage {data['stage']!r}", 422)
+                raise HubError(f"unknown stage {data['stage']!r}", 422)
             fields["stage"] = data["stage"]
         if "position" in data:
             fields["position"] = float(data["position"])
         if "model" in data:
-            if data["model"] not in self.hub.config.models:
-                raise TaskError(f"unknown model {data['model']!r}", 422)
+            check_model(self.hub.config, data["model"])
             fields["model"] = data["model"]
         new_assignee = None
         if "assignee_id" in data and data["assignee_id"] != ticket["assignee_id"]:
             new_assignee = self.db.user(str(data["assignee_id"]))
             if new_assignee is None:
-                raise TaskError("unknown assignee", 422)
+                raise HubError("unknown assignee", 422)
             fields["assignee_id"] = new_assignee["id"]
         if fields:
             fields["updated_at"] = now_iso()
@@ -199,12 +203,12 @@ class Tickets:
         ticket = self.get(ticket_id)
         author = self.db.user(author_id)
         if not body.strip():
-            raise TaskError("the comment is empty", 422)
+            raise HubError("the comment is empty", 422)
         reply_row = None
         if reply_to is not None:
             reply_row = self.db.one("SELECT * FROM comments WHERE id = ? AND ticket_id = ?", (reply_to, ticket_id))
             if reply_row is None:
-                raise TaskError(f"comment {reply_to} is not on ticket {ticket_key(ticket_id)}", 422)
+                raise HubError(f"comment {reply_to} is not on ticket {ticket_key(ticket_id)}", 422)
         comment_id = self.db.run(
             "INSERT INTO comments (ticket_id, author_id, body, reply_to_id, created_at) VALUES (?, ?, ?, ?, ?)",
             (ticket_id, author["id"], body, reply_to, now_iso()),
@@ -306,35 +310,37 @@ class Tickets:
         """Case-insensitive substring search over tickets, comments and task chats, archived tasks included."""
         phrase = phrase.strip()
         if not phrase:
-            raise TaskError("give a phrase to search for", 422)
+            raise HubError("give a phrase to search for", 422)
         users = {u["id"]: u["name"] for u in self.db.users()}
+        hits = self._ticket_hits(phrase, users) + self._comment_hits(phrase, users) + self._chat_hits(phrase, users)
+        return {"query": phrase, "hits": hits}
 
-        def task_ref(t: dict) -> dict:
-            return {"id": t["id"], "title": t["title"] or None, "status": t["status"], "ai_user": users.get(t["ai_user_id"])}
-
-        def ticket_ref(ticket_id: int | None) -> dict | None:
-            if not ticket_id:
-                return None
-            row = self.db.one("SELECT id, title FROM tickets WHERE id = ?", (ticket_id,))
-            return {"key": ticket_key(row["id"]), "title": row["title"]} if row else None
-
-        def tasks_of(ticket_id: int) -> list[dict]:
-            return [task_ref(t) for t in self.db.all("SELECT * FROM tasks WHERE ticket_id = ? ORDER BY id", (ticket_id,))]
-
-        hits: list[dict] = []
+    def _ticket_hits(self, phrase: str, users: dict) -> list[dict]:
+        hits = []
         for t in self.db.all(
             "SELECT * FROM tickets WHERE instr(lower(title), lower(?)) > 0 OR instr(lower(description), lower(?)) > 0",
             (phrase, phrase),
         ):
-            where = "ticket title" if phrase.lower() in t["title"].lower() else "ticket description"
-            text = t["title"] if where == "ticket title" else t["description"]
-            hits.append({"where": where, "ticket": ticket_ref(t["id"]), "task": None,
-                         "tasks_of_ticket": tasks_of(t["id"]), "snippet": _snippet(text, phrase)})
+            in_title = phrase.lower() in t["title"].lower()
+            hits.append(self._hit(
+                "ticket title" if in_title else "ticket description", t["id"], None,
+                self._tasks_of(t["id"], users), t["title"] if in_title else t["description"], phrase,
+            ))
+        return hits
+
+    def _comment_hits(self, phrase: str, users: dict) -> list[dict]:
+        hits = []
         for c in self.db.all("SELECT * FROM comments WHERE instr(lower(body), lower(?)) > 0 ORDER BY id", (phrase,)):
             posting = self.hub.tasks.get(c["task_id"]) if c["task_id"] else None
-            hits.append({"where": f"comment by {users.get(c['author_id'])}", "ticket": ticket_ref(c["ticket_id"]),
-                         "task": task_ref(posting) if posting else None, "tasks_of_ticket": tasks_of(c["ticket_id"]),
-                         "snippet": _snippet(c["body"], phrase)})
+            hits.append(self._hit(
+                f"comment by {users.get(c['author_id'])}", c["ticket_id"], _task_ref(posting, users) if posting else None,
+                self._tasks_of(c["ticket_id"], users), c["body"], phrase,
+            ))
+        return hits
+
+    def _chat_hits(self, phrase: str, users: dict) -> list[dict]:
+        """One hit per task: its first chat message holding the phrase."""
+        hits = []
         seen_tasks: set[int] = set()
         for e in self.db.all(
             "SELECT e.task_id, e.text FROM task_events e WHERE e.kind IN ('user', 'reply', 'assistant')"
@@ -345,9 +351,21 @@ class Tickets:
                 continue
             seen_tasks.add(e["task_id"])
             t = self.hub.tasks.get(e["task_id"])
-            hits.append({"where": "task chat", "ticket": ticket_ref(t["ticket_id"]), "task": task_ref(t),
-                         "tasks_of_ticket": [], "snippet": _snippet(e["text"], phrase)})
-        return {"query": phrase, "hits": hits}
+            hits.append(self._hit("task chat", t["ticket_id"], _task_ref(t, users), [], e["text"], phrase))
+        return hits
+
+    def _hit(self, where: str, ticket_id: int | None, task: dict | None, tasks_of_ticket: list[dict], text: str, phrase: str) -> dict:
+        return {"where": where, "ticket": self._ticket_ref(ticket_id), "task": task,
+                "tasks_of_ticket": tasks_of_ticket, "snippet": _snippet(text, phrase)}
+
+    def _ticket_ref(self, ticket_id: int | None) -> dict | None:
+        if not ticket_id:
+            return None
+        row = self.db.one("SELECT id, title FROM tickets WHERE id = ?", (ticket_id,))
+        return {"key": ticket_key(row["id"]), "title": row["title"]} if row else None
+
+    def _tasks_of(self, ticket_id: int, users: dict) -> list[dict]:
+        return [_task_ref(t, users) for t in self.db.all("SELECT * FROM tasks WHERE ticket_id = ? ORDER BY id", (ticket_id,))]
 
     # ================================================================ Activity
     def activity(self) -> tuple[list[dict], int]:
@@ -375,6 +393,10 @@ class Tickets:
         self.db.set_setting("activity_seen_comment_id", str(newest))
         self.hub.events.publish("activity")
         return 0
+
+
+def _task_ref(t: dict, users: dict) -> dict:
+    return {"id": t["id"], "title": t["title"] or None, "status": t["status"], "ai_user": users.get(t["ai_user_id"])}
 
 
 def _snippet(text: str, phrase: str, width: int = 80) -> str:

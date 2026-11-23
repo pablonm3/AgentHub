@@ -15,9 +15,11 @@ import sqlite3
 import subprocess
 import threading
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
+from .config import check_model
 from .db import now_iso, now_ms
+from .errors import HubError
 from .sessions import TurnOutcome, tool_hint
 
 if TYPE_CHECKING:
@@ -27,11 +29,15 @@ log = logging.getLogger("agenthub.tasks")
 
 OPEN = ("running", "waiting_on_user", "done")
 STATUSES = ("running", "waiting_on_user", "done", "archived")
-TOKEN_COLS = ("input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens")
-TOKEN_KEYS = ("input", "output", "cache_creation", "cache_read")
-TOKEN_SUM = " + ".join(TOKEN_COLS)
+TOKENS = {"input": "input_tokens", "output": "output_tokens", "cache_creation": "cache_creation_tokens", "cache_read": "cache_read_tokens"}
+TOKEN_SUM = " + ".join(TOKENS.values())
 STOP_GRACE_S = 5
-KEEP = object()  # "leave status_reason as it is"
+NO_TURN = -1  # turn_id of an event delivered outside any model turn (system, error, gate events)
+
+
+def token_assignments() -> str:
+    """`input_tokens = ?, output_tokens = ?, …`, for UPDATEs whose arguments follow TOKENS' order."""
+    return ", ".join(f"{c} = ?" for c in TOKENS.values())
 
 TASK_SELECT = f"""
 SELECT t.*, k.title AS ticket_title,
@@ -40,13 +46,6 @@ SELECT t.*, k.title AS ticket_title,
   (SELECT text FROM task_events WHERE task_id = t.id AND kind IN ('user', 'notice') ORDER BY id LIMIT 1) AS first_message
 FROM tasks t LEFT JOIN tickets k ON k.id = t.ticket_id
 """
-
-
-class TaskError(Exception):
-    def __init__(self, message: str, status: int = 409):
-        super().__init__(message)
-        self.message = message
-        self.status = status
 
 
 @dataclass
@@ -128,7 +127,7 @@ class Tasks:
     def view(self, task_id: int, with_events: bool = False) -> dict:
         row = self.db.one(TASK_SELECT + " WHERE t.id = ?", (task_id,))
         if row is None:
-            raise TaskError(f"task {task_id} not found", 404)
+            raise HubError(f"task {task_id} not found", 404)
         out = self._view(row)
         if with_events:
             out["events"] = self.events_of(task_id)
@@ -142,7 +141,7 @@ class Tasks:
         elif status in STATUSES:
             rows = self.db.all(TASK_SELECT + " WHERE t.status = ? ORDER BY t.id DESC", (status,))
         else:
-            raise TaskError(f"unknown status filter {status!r}", 422)
+            raise HubError(f"unknown status filter {status!r}", 422)
         return [self._view(r) for r in rows]
 
     def for_ticket(self, ticket_id: int) -> list[dict]:
@@ -176,10 +175,10 @@ class Tasks:
     ) -> dict:
         ai = self.db.user(ai_user_id)
         if not ai or ai["kind"] != "ai":
-            raise TaskError("a task needs an AI user", 422)
-        self._check_model(model)
+            raise HubError("a task needs an AI user", 422)
+        check_model(self.hub.config, model)
         if not first_message.strip():
-            raise TaskError("a task needs a first message", 422)
+            raise HubError("a task needs a first message", 422)
         system_prompt = self.hub.sessions.compose_system_prompt(ai)
         now = now_iso()
         with self.lock:
@@ -195,7 +194,7 @@ class Tasks:
                         (task_id, first_kind, first_message, now),
                     )
             except sqlite3.IntegrityError:
-                raise TaskError(f"{ai['name']} already has an open task on this ticket", 409)
+                raise HubError(f"{ai['name']} already has an open task on this ticket", 409)
             self._kick(task_id)
         self._publish(task_id)
         return self.view(task_id)
@@ -203,11 +202,11 @@ class Tasks:
     def send(self, task_id: int, text: str, kind: str = "user", comment_id: int | None = None) -> dict:
         """Deliver a message: queued while a turn runs, else it starts the next turn (AC15)."""
         if not text.strip():
-            raise TaskError("the message is empty", 422)
+            raise HubError("the message is empty", 422)
         with self.lock:
             task = self._require(task_id)
             if task["status"] == "archived":
-                raise TaskError("this task is archived and takes no further messages", 409)
+                raise HubError("this task is archived and takes no further messages", 409)
             self.add_event(task_id, kind, text, comment_id=comment_id, queued=True)
             if task["status"] != "running":  # also while a stopped turn is still finishing
                 self._set_status(task_id, "running", reason=None)
@@ -221,7 +220,7 @@ class Tasks:
         with self.lock:
             task = self._require(task_id)
             if task["status"] == "archived":
-                raise TaskError("this task is archived", 409)
+                raise HubError("this task is archived", 409)
             if task["status"] != "running":
                 return self.view(task_id)
             active = self._active.get(task_id)
@@ -239,7 +238,7 @@ class Tasks:
         with self.lock:
             task = self._require(task_id)
             if task["status"] != "done":
-                raise TaskError("only a done task can be archived", 409)
+                raise HubError("only a done task can be archived", 409)
             self._set_status(task_id, "archived", reason=None)
         self._publish(task_id)
         return self.view(task_id)
@@ -248,16 +247,16 @@ class Tasks:
         with self.lock:
             task = self._require(task_id)
             if task["status"] == "archived":
-                raise TaskError("this task is archived", 409)
+                raise HubError("this task is archived", 409)
             if title is not None:
                 if not title.strip():
-                    raise TaskError("the title is empty", 422)
+                    raise HubError("the title is empty", 422)
                 self.db.run(
                     "UPDATE tasks SET title = ?, title_source = 'human', updated_at = ? WHERE id = ?",
                     (title.strip(), now_iso(), task_id),
                 )
             if model is not None:
-                self._check_model(model)
+                check_model(self.hub.config, model)
                 self.db.run("UPDATE tasks SET model = ?, updated_at = ? WHERE id = ?", (model, now_iso(), task_id))
         self._publish(task_id)
         return self.view(task_id)
@@ -296,9 +295,9 @@ class Tasks:
         self._publish(task_id)
 
     def add_event(self, task_id: int, kind: str, text: str, comment_id: int | None = None, queued: bool = False, turn_id: int | None = None) -> int:
-        """`queued` user/notice events have no turn yet; every other event is stored as delivered (turn_id -1 when none)."""
+        """`queued` user/notice events have no turn yet; every other event is stored as delivered (NO_TURN when none)."""
         if not queued and turn_id is None:
-            turn_id = -1
+            turn_id = NO_TURN
         event_id = self.db.run(
             "INSERT INTO task_events (task_id, turn_id, comment_id, kind, text, created_at) VALUES (?, ?, ?, ?, ?, ?)",
             (task_id, None if queued else turn_id, comment_id, kind, text, now_iso()),
@@ -426,16 +425,16 @@ class Tasks:
     def _own_tokens(self, task_id: int, turn_id: int, session_id: str | None, reported: dict | None) -> dict:
         """This turn's own use from the session total the process reported (AC13)."""
         if not reported:
-            return {k: 0 for k in TOKEN_KEYS}
+            return {k: 0 for k in TOKENS}
         earlier_row = self.db.one(
-            "SELECT " + ", ".join(f"COALESCE(SUM({c}), 0) AS {k}" for c, k in zip(TOKEN_COLS, TOKEN_KEYS))
+            "SELECT " + ", ".join(f"COALESCE(SUM({c}), 0) AS {k}" for k, c in TOKENS.items())
             + " FROM turns WHERE task_id = ? AND session_id IS ? AND id <> ?",
             (task_id, session_id, turn_id),
         ) or {}
-        earlier = {k: int(earlier_row.get(k) or 0) for k in TOKEN_KEYS}
-        rep = {k: int(reported.get(k) or 0) for k in TOKEN_KEYS}
+        earlier = {k: int(earlier_row.get(k) or 0) for k in TOKENS}
+        rep = {k: int(reported.get(k) or 0) for k in TOKENS}
         if sum(rep.values()) >= sum(earlier.values()):
-            return {k: max(0, rep[k] - earlier[k]) for k in TOKEN_KEYS}
+            return {k: max(0, rep[k] - earlier[k]) for k in TOKENS}
         return rep  # a lower figure: a new session's own total
 
     def _finish(self, task_id: int, active: ActiveTurn, outcome: TurnOutcome) -> None:
@@ -445,9 +444,8 @@ class Tasks:
             own = self._own_tokens(task_id, active.turn_id, session_id, outcome.tokens)
             kind = "stopped" if active.stopped else ("completed" if outcome.ok else "failed")
             self.db.run(
-                "UPDATE turns SET ended_at = ?, session_id = ?, outcome = ?, "
-                + ", ".join(f"{c} = ?" for c in TOKEN_COLS) + " WHERE id = ?",
-                (now_ms(), session_id, kind, *[own[k] for k in TOKEN_KEYS], active.turn_id),
+                f"UPDATE turns SET ended_at = ?, session_id = ?, outcome = ?, {token_assignments()} WHERE id = ?",
+                (now_ms(), session_id, kind, *[own[k] for k in TOKENS], active.turn_id),
             )
             if session_id:
                 self.db.run("UPDATE tasks SET session_id = ? WHERE id = ?", (session_id, task_id))
@@ -473,39 +471,46 @@ class Tasks:
             self.add_event(task_id, "error", reason)
         with self.lock:
             self._active.pop(task_id, None)
-            task = self.get(task_id)
-            if self._queued(task_id) and task["status"] != "archived":
-                self._kick(task_id)  # also a message sent after Stop, while this turn was finishing
-            elif active.stopped or task["status"] != "running":
-                pass  # stop already set the status
-            elif self.hub.bridge.pending_gate(task_id):
-                self._set_status(task_id, "waiting_on_user", reason=reason)
-            elif self.hub.bridge.has_live_run(task_id) and outcome.ok:
-                self.db.run("UPDATE tasks SET status_reason = ? WHERE id = ?", (reason, task_id))
-            else:
-                status = structured["status"] if (outcome.ok and structured) else "waiting_on_user"
-                self._set_status(task_id, status, reason=reason)
+            self._next_status_after_turn(task_id, active, outcome, structured, reason)
         self._publish(task_id)
         self.hub.events.publish("tickets")
         self.hub.events.publish("activity")
 
+    def _next_status_after_turn(self, task_id: int, active: ActiveTurn, outcome: TurnOutcome, structured: dict | None, reason: str | None) -> None:
+        """Pick the task's status once its turn has ended. Called with the lock held."""
+        task = self.get(task_id)
+        if self._queued(task_id) and task["status"] != "archived":
+            # messages arrived during the turn, or after Stop while it was finishing: run them next
+            self._kick(task_id)
+        elif active.stopped or task["status"] != "running":
+            pass  # stop already set the status
+        elif self.hub.bridge.pending_gate(task_id):
+            # a posted gate waits on Pablo's reply
+            self._set_status(task_id, "waiting_on_user", reason=reason)
+        elif self.hub.bridge.has_live_run(task_id) and outcome.ok:
+            # a live harness run keeps the task running
+            self.db.run("UPDATE tasks SET status_reason = ? WHERE id = ?", (reason, task_id))
+        else:
+            # the AI user's own choice, or waiting on Pablo after a failed turn
+            status = structured["status"] if (outcome.ok and structured) else "waiting_on_user"
+            self._set_status(task_id, status, reason=reason)
+
     # ================================================================ status and timer
-    def _set_status(self, task_id: int, status: str, reason: Any = KEEP) -> None:
+    def _set_status(self, task_id: int, status: str, reason: str | None) -> None:
         """Change the status; the timer runs only while the status is running (AC12)."""
         task = self.get(task_id)
         now = now_ms()
         running_ms, since = task["running_ms"], task["running_since"]
+        # leaving running banks the elapsed time; entering running starts the clock
         if task["status"] == "running" and status != "running" and since:
             running_ms += max(0, now - since)
-            since = None
-        if status == "running" and (task["status"] != "running" or since is None):
-            since = now
         if status != "running":
             since = None
-        new_reason = task["status_reason"] if reason is KEEP else reason
+        elif task["status"] != "running" or since is None:
+            since = now
         self.db.run(
             "UPDATE tasks SET status = ?, status_reason = ?, running_ms = ?, running_since = ?, updated_at = ? WHERE id = ?",
-            (status, new_reason, running_ms, since, now_iso(), task_id),
+            (status, reason, running_ms, since, now_iso(), task_id),
         )
 
     def recover(self, live_task_ids: set[int] | None = None) -> None:
@@ -519,9 +524,9 @@ class Tasks:
         for task in self.db.all("SELECT * FROM tasks WHERE status = 'running'"):
             if task["id"] in live:
                 continue
-            last = self.db.value("SELECT MAX(last_event_at) FROM turns WHERE task_id = ?", (task["id"],)) or task["running_since"]
-            since = task["running_since"] or last
-            running_ms = task["running_ms"] + max(0, (last or since or 0) - (since or 0))
+            since = task["running_since"]
+            last = self.db.value("SELECT MAX(last_event_at) FROM turns WHERE task_id = ?", (task["id"],)) or since
+            running_ms = task["running_ms"] + (max(0, last - since) if since else 0)
             self.db.run(
                 "UPDATE tasks SET status = 'waiting_on_user', status_reason = 'interrupted by a restart', running_ms = ?,"
                 " running_since = NULL, updated_at = ? WHERE id = ?",
@@ -539,12 +544,8 @@ class Tasks:
     def _require(self, task_id: int) -> dict:
         task = self.get(task_id)
         if task is None:
-            raise TaskError(f"task {task_id} not found", 404)
+            raise HubError(f"task {task_id} not found", 404)
         return task
-
-    def _check_model(self, model: str) -> None:
-        if model not in self.hub.config.models:
-            raise TaskError(f"unknown model {model!r}; choices: {', '.join(self.hub.config.models)}", 422)
 
     def _publish(self, task_id: int) -> None:
         self.hub.events.publish("tasks", task_id)

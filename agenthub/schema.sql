@@ -83,6 +83,7 @@ CREATE TABLE turns (
 
 -- kind: user | notice | assistant | tool | reply | system | error
 -- a user or notice row with turn_id NULL is queued, not yet delivered
+-- turn_id -1 (NO_TURN in tasks.py): delivered, but not part of a model turn (system, error, gate events)
 -- comment_id: the ticket comment this user event delivers (one comment can reach several tasks)
 CREATE TABLE task_events (
     id         INTEGER PRIMARY KEY,
@@ -96,6 +97,8 @@ CREATE TABLE task_events (
 CREATE INDEX task_events_by_task ON task_events(task_id, id);
 
 -- the token columns hold the sum over the run's step executions
+-- status: running | paused | done | failed | blocked (from state.json) | stopped (by Pablo) | interrupted (by a restart)
+-- pending_kind: gate | question, while the paused run waits on an answer (NULL otherwise)
 CREATE TABLE harness_runs (
     run_id                TEXT PRIMARY KEY,
     task_id               INTEGER NOT NULL REFERENCES tasks(id),

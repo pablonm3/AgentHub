@@ -8,6 +8,8 @@ from pathlib import Path
 
 from harness.paths import Layout
 
+from .errors import HubError
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 MODELS = ["fable", "opus", "sonnet", "haiku"]  # aliases the `claude` CLI accepts for --model
@@ -67,3 +69,9 @@ class Config:
 
     def layout(self) -> Layout:
         return Layout(self.root, private_root=self.private_dir, data_root=self.orchestrator_dir)
+
+
+def check_model(config: Config, model: object) -> None:
+    """Refuse a model the `claude` CLI is not offered with (422)."""
+    if model not in config.models:
+        raise HubError(f"unknown model {model!r}; choices: {', '.join(config.models)}", 422)

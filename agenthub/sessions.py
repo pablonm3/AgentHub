@@ -250,21 +250,28 @@ class Sessions:
         out["method"] = data.get("authMethod")
         out["subscription"] = data.get("subscriptionType")
         out["expires_at"] = data.get("loginExpiresAt")
-        logged_in = bool(data.get("loggedIn"))
-        if logged_in and out["expires_at"]:
-            try:
-                expiry = datetime.fromisoformat(str(out["expires_at"]).replace("Z", "+00:00"))
-                if expiry <= datetime.now(timezone.utc):
-                    logged_in = False
-                    out["detail"] = "the stored Claude login has expired; run `claude auth login` in a terminal"
-            except ValueError:
-                pass
         if not data.get("loggedIn"):
+            out["logged_in"] = False
             out["detail"] = "no Claude login is stored on this machine; run `claude auth login` in a terminal"
-        out["logged_in"] = logged_in
-        if logged_in:
-            out["detail"] = "logged in"
+            return out
+        if _expired(out["expires_at"]):
+            out["logged_in"] = False
+            out["detail"] = "the stored Claude login has expired; run `claude auth login` in a terminal"
+            return out
+        out["logged_in"] = True
+        out["detail"] = "logged in"
         return out
+
+
+def _expired(expires_at: object) -> bool:
+    """True when an ISO expiry time has passed; a missing or unreadable one is not expired."""
+    if not expires_at:
+        return False
+    try:
+        expiry = datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return expiry <= datetime.now(timezone.utc)
 
 
 def _last_stderr(transcript: Path) -> str:

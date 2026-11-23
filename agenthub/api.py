@@ -16,11 +16,11 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .config import Config
+from .config import Config, check_model
+from .errors import HubError
 from .hub import Hub
 from .projects import ProjectError
 from .reports import ReportError
-from .tasks import TaskError
 from .tickets import STAGES
 
 WEB_DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
@@ -63,8 +63,8 @@ def create_app(config: Config | None = None, start: bool = True) -> FastAPI:
                 return _error("send the request as application/json", 415)
         return await call_next(request)
 
-    @app.exception_handler(TaskError)
-    async def task_error(request: Request, e: TaskError):
+    @app.exception_handler(HubError)
+    async def hub_error(request: Request, e: HubError):
         return _error(e.message, e.status)
 
     @app.exception_handler(ProjectError)
@@ -103,8 +103,7 @@ def create_app(config: Config | None = None, start: bool = True) -> FastAPI:
     @app.patch("/api/settings")
     def patch_settings(body: dict = Body(...)):
         model = body.get("default_model")
-        if model not in config.models:
-            raise TaskError(f"unknown model {model!r}", 422)
+        check_model(config, model)
         hub.db.set_setting("default_model", model)
         hub.events.publish("settings")
         return {"default_model": model}
@@ -117,12 +116,12 @@ def create_app(config: Config | None = None, start: bool = True) -> FastAPI:
     def patch_user(user_id: str, body: dict = Body(...)):
         user = hub.db.user(user_id)
         if user is None:
-            raise TaskError("no such user", 404)
+            raise HubError("no such user", 404)
         if user["kind"] != "ai":
-            raise TaskError("only an AI user has a role prompt", 422)
+            raise HubError("only an AI user has a role prompt", 422)
         prompt = str(body.get("prompt") or "").strip()
         if not prompt:
-            raise TaskError("the prompt is empty", 422)
+            raise HubError("the prompt is empty", 422)
         hub.db.run("UPDATE users SET prompt = ? WHERE id = ?", (prompt, user_id))
         hub.events.publish("users")
         return hub.db.user(user_id)
@@ -162,7 +161,7 @@ def create_app(config: Config | None = None, start: bool = True) -> FastAPI:
     def create_task(body: dict = Body(...)):
         ai_user_id = body.get("ai_user_id")
         if not ai_user_id:
-            raise TaskError("choose the AI user that receives the task", 422)
+            raise HubError("choose the AI user that receives the task", 422)
         task = hub.tasks.create(
             str(ai_user_id), body.get("model") or hub.db.setting("default_model"), str(body.get("message") or ""), origin="manual"
         )
@@ -228,7 +227,7 @@ def create_app(config: Config | None = None, start: bool = True) -> FastAPI:
         token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
         task = hub.tasks.by_token(token) if token else None
         if task is None:
-            raise TaskError("unknown task token", 401)
+            raise HubError("unknown task token", 401)
         return task
 
     @app.post("/internal/title")
