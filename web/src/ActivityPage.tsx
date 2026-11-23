@@ -5,19 +5,16 @@ import { deliveryLine } from './lib/delivery'
 import { formatRelative } from './lib/format'
 import {
   findUser,
-  loadActivity,
-  loadTasks,
-  loadTicketDetail,
-  loadTickets,
   markSeen,
   openTask,
   openTicket,
+  refresh,
   serverNow,
   useAppState,
   userName,
 } from './store'
 import { color, font, pageTitle } from './theme'
-import { Avatar, Button, Markdown } from './ui'
+import { Avatar, Button, EmptyState, Markdown } from './ui'
 
 /** The comments AI users posted on tickets, newest first, each with a reply box. */
 export default function ActivityPage() {
@@ -36,10 +33,7 @@ export default function ActivityPage() {
   const reply = async (item: ActivityItem, body: string) => {
     const result = await api.comment(item.ticket.id, body, item.comment.id)
     setSent((prev) => ({ ...prev, [item.comment.id]: [...(prev[item.comment.id] ?? []), result.comment] }))
-    void loadActivity()
-    void loadTasks()
-    void loadTickets()
-    void loadTicketDetail()
+    refresh('activity', 'tasks', 'tickets')
   }
 
   return (
@@ -61,18 +55,7 @@ export default function ActivityPage() {
         </p>
       </div>
       {activity.length === 0 && (
-        <p
-          style={{
-            margin: 0,
-            padding: '28px 16px',
-            border: `1px dashed ${color.lineStrong}`,
-            borderRadius: 12,
-            color: color.muted,
-            textAlign: 'center',
-          }}
-        >
-          No AI comments yet.
-        </p>
+        <EmptyState>No AI comments yet.</EmptyState>
       )}
       {activity.map((item) => {
         const author = findUser(boot.users, item.ai_user_id) ?? findUser(boot.users, item.comment.author_id)

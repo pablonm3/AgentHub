@@ -88,6 +88,22 @@ export function useAppState(): AppState {
   return useSyncExternalStore(subscribe, getState, getState)
 }
 
+/** The open ticket: its id, its loaded detail (null until loaded) and its board list item. */
+export function useOpenTicket() {
+  const s = useAppState()
+  const id = s.openTicketId
+  const detail = s.ticketDetail && s.ticketDetail.id === id ? s.ticketDetail : null
+  return { id, detail, item: s.tickets.find((t) => t.id === id) }
+}
+
+/** The open task: its id, its loaded detail (null until loaded) and its list item. */
+export function useOpenTask() {
+  const s = useAppState()
+  const id = s.openTaskId
+  const detail = s.taskDetail && s.taskDetail.id === id ? s.taskDetail : null
+  return { id, detail, item: s.tasks.find((t) => t.id === id) }
+}
+
 // ---- helpers over the state ----------------------------------------------------------------
 
 export function serverNow(): number {
@@ -121,6 +137,21 @@ export function notifyError(err: unknown): void {
   notify('error', errorMessage(err))
 }
 
+/** Run a write; on failure show the error notice, then reject so the caller can keep its edit open. */
+export async function notifyOnFailure<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run()
+  } catch (err) {
+    notifyError(err)
+    throw err
+  }
+}
+
+/** Start a write nobody waits for: a failure is already shown by `notifyOnFailure`, so it is dropped here. */
+export function runInBackground(write: Promise<unknown>): void {
+  void write.catch(() => undefined)
+}
+
 // ---- loaders -------------------------------------------------------------------------------
 
 /** Runs `fn` one at a time; a call made while it runs triggers exactly one more run. */
@@ -146,13 +177,13 @@ function serial(fn: () => Promise<void>): () => Promise<void> {
   }
 }
 
-function track(err: unknown): void {
+function markOfflineIfUnreachable(err: unknown): void {
   if (err instanceof ApiError && err.status === 0) {
     if (!state.offline) setState({ offline: true })
   }
 }
 
-function online(): void {
+function markOnline(): void {
   if (state.offline) setState({ offline: false })
 }
 
@@ -172,9 +203,9 @@ export const loadBoot = serial(async () => {
     const offset = server === null ? 0 : server - Date.now()
     // Same machine in practice; only correct a clear difference, not second-rounding noise.
     setState({ boot, bootError: null, clockOffset: Math.abs(offset) > 2000 ? offset : 0 })
-    online()
+    markOnline()
   } catch (err) {
-    track(err)
+    markOfflineIfUnreachable(err)
     if (!state.boot) setState({ bootError: errorMessage(err) })
   }
 })
@@ -183,9 +214,9 @@ export const loadTickets = serial(async () => {
   try {
     const { tickets } = await api.tickets()
     setState({ tickets })
-    online()
+    markOnline()
   } catch (err) {
-    track(err)
+    markOfflineIfUnreachable(err)
   }
 })
 
@@ -193,9 +224,9 @@ export const loadTasks = serial(async () => {
   try {
     const { tasks } = await api.tasks('all')
     setState({ tasks })
-    online()
+    markOnline()
   } catch (err) {
-    track(err)
+    markOfflineIfUnreachable(err)
   }
 })
 
@@ -204,7 +235,7 @@ export const markSeen = serial(async () => {
     const { unseen } = await api.activitySeen()
     setState({ unseen })
   } catch (err) {
-    track(err)
+    markOfflineIfUnreachable(err)
   }
 })
 
@@ -212,11 +243,11 @@ export const loadActivity = serial(async () => {
   try {
     const { items, unseen } = await api.activity()
     setState({ activity: items, unseen })
-    online()
+    markOnline()
     // Entries that arrive while the Activity tab is shown are seen.
     if (state.tab === 'activity' && unseen > 0) void markSeen()
   } catch (err) {
-    track(err)
+    markOfflineIfUnreachable(err)
   }
 })
 
@@ -227,7 +258,7 @@ export const loadTicketDetail = serial(async () => {
     const detail = await api.ticket(id)
     if (state.openTicketId === id) setState({ ticketDetail: detail })
   } catch (err) {
-    track(err)
+    markOfflineIfUnreachable(err)
     if (err instanceof ApiError && err.status === 404 && state.openTicketId === id) {
       setState({ openTicketId: null, ticketDetail: null })
       notify('warning', 'That ticket no longer exists.')
@@ -242,7 +273,7 @@ export const loadTaskDetail = serial(async () => {
     const detail = await api.task(id)
     if (state.openTaskId === id) setState({ taskDetail: detail })
   } catch (err) {
-    track(err)
+    markOfflineIfUnreachable(err)
     if (err instanceof ApiError && err.status === 404 && state.openTaskId === id) {
       setState({ openTaskId: null, taskDetail: null })
       notify('warning', 'That task no longer exists.')
@@ -269,6 +300,17 @@ const TOPIC_LOADERS: Record<ServerEvent['topic'], Array<() => Promise<void>>> = 
   projects: [loadBoot],
 }
 
+function loadersFor(topics: Iterable<ServerEvent['topic']>): Set<() => Promise<void>> {
+  const loaders = new Set<() => Promise<void>>()
+  for (const t of topics) for (const load of TOPIC_LOADERS[t] ?? []) loaders.add(load)
+  return loaders
+}
+
+/** Refetch now what the given topics cover (TOPIC_LOADERS), e.g. after a write of this client. */
+export function refresh(...topics: Array<ServerEvent['topic']>): void {
+  for (const load of loadersFor(topics)) void load()
+}
+
 const pendingTopics = new Set<ServerEvent['topic']>()
 let flushTimer: number | null = null
 
@@ -279,8 +321,7 @@ function refreshTopic(topic: ServerEvent['topic']): void {
   // Coalesce bursts of events (a turn emits many) into one refetch per loader.
   flushTimer = window.setTimeout(() => {
     flushTimer = null
-    const loaders = new Set<() => Promise<void>>()
-    for (const t of pendingTopics) for (const load of TOPIC_LOADERS[t]) loaders.add(load)
+    const loaders = loadersFor(pendingTopics)
     pendingTopics.clear()
     for (const load of loaders) void load()
   }, 150)
@@ -301,7 +342,7 @@ export function startLive(): () => void {
     source = new EventSource(EVENTS_URL)
     source.onopen = () => {
       // Catch up on whatever happened while the stream was down.
-      online()
+      markOnline()
       loadAll()
     }
     source.onmessage = (msg: MessageEvent<string>) => {
@@ -396,8 +437,7 @@ export function applyTaskDetail(detail: TaskDetail): void {
     ? state.tasks.map((t) => (t.id === task.id ? task : t))
     : [task, ...state.tasks]
   setState({ tasks, taskDetail: state.openTaskId === detail.id ? detail : state.taskDetail })
-  void loadTicketDetail()
-  void loadTickets()
+  refresh('tickets')
 }
 
 /** Optimistic board move; the server's answer or the next refetch replaces it. */

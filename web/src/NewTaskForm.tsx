@@ -2,7 +2,7 @@ import { useId, useState, type FormEvent } from 'react'
 import { api, errorMessage } from './api'
 import { applyTaskDetail, loadTasks, openTask, useAppState } from './store'
 import { color, font, textarea } from './theme'
-import { Button, CloseButton, Dialog, FieldLabel, Select } from './ui'
+import { Button, CloseButton, Dialog, ErrorText, FieldLabel, Select } from './ui'
 
 /** "New task": a task without a ticket, for an AI user Pablo must pick. */
 export default function NewTaskForm({ onClose }: { onClose: () => void }) {
@@ -85,9 +85,7 @@ export default function NewTaskForm({ onClose }: { onClose: () => void }) {
             style={textarea}
           />
           {error && (
-            <p role="alert" style={{ margin: 0, color: color.errorInk, fontSize: 13 }}>
-              {error}
-            </p>
+            <ErrorText>{error}</ErrorText>
           )}
           <div style={{ display: 'flex', gap: 8 }}>
             <Button kind="primary" type="submit" disabled={!aiUser || busy} style={{ minHeight: 44 }}>

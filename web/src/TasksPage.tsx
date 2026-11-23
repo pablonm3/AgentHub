@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { api, type Task, type TaskStatus, type User } from './api'
 import NewTaskForm from './NewTaskForm'
-import { applyTaskDetail, findUser, notifyError, openTask, useAppState } from './store'
+import { applyTaskDetail, findUser, notifyOnFailure, openTask, runInBackground, useAppState } from './store'
 import { color, font, pageTitle } from './theme'
-import { Avatar, Button, ChevronIcon, EditableTitle, PlusIcon, StatusPill, Timer, TokenCounts } from './ui'
+import { Avatar, Button, ChevronIcon, EditableTitle, EmptyState, PlusIcon, StatusPill, Timer, TokenCounts } from './ui'
 
 type Filter = 'all' | TaskStatus
 
@@ -109,18 +109,7 @@ export default function TasksPage() {
         ))}
       </div>
       {rows.length === 0 && (
-        <p
-          style={{
-            margin: 0,
-            padding: '28px 16px',
-            border: `1px dashed ${color.lineStrong}`,
-            borderRadius: 12,
-            color: color.muted,
-            textAlign: 'center',
-          }}
-        >
-          No tasks with this status right now.
-        </p>
+        <EmptyState>No tasks with this status right now.</EmptyState>
       )}
       {creating && <NewTaskForm onClose={() => setCreating(false)} />}
     </main>
@@ -129,21 +118,8 @@ export default function TasksPage() {
 
 function TaskRow({ task, user }: { task: Task; user: User | undefined }) {
   const archived = task.status === 'archived'
-  const saveTitle = async (title: string) => {
-    try {
-      applyTaskDetail(await api.updateTask(task.id, { title }))
-    } catch (err) {
-      notifyError(err)
-      throw err
-    }
-  }
-  const stop = async () => {
-    try {
-      applyTaskDetail(await api.stopTask(task.id))
-    } catch (err) {
-      notifyError(err)
-    }
-  }
+  const saveTitle = (title: string) => notifyOnFailure(async () => applyTaskDetail(await api.updateTask(task.id, { title })))
+  const stop = () => runInBackground(notifyOnFailure(async () => applyTaskDetail(await api.stopTask(task.id))))
 
   return (
     <div

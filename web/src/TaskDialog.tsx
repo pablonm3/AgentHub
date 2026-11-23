@@ -1,14 +1,17 @@
 import { useState, type CSSProperties } from 'react'
-import { api, errorMessage, type ChatEvent, type Task, type TaskDetail, type User } from './api'
+import { api, errorMessage, type ChatEvent, type Task, type TaskDetail, type TaskStatus, type User } from './api'
 import { formatRelative, formatTokens } from './lib/format'
 import {
   applyTaskDetail,
   closeTask,
   findUser,
   loadTasks,
-  notifyError,
+  notifyOnFailure,
+  refresh,
+  runInBackground,
   serverNow,
   useAppState,
+  useOpenTask,
   viewTicketOf,
 } from './store'
 import { dark, font } from './theme'
@@ -17,10 +20,8 @@ import { Avatar, Button, CloseButton, Dialog, EditableTitle, Markdown, Select, S
 /** One task's chat, opened from the Tasks page or from a ticket's Tasks block. */
 export default function TaskDialog() {
   const s = useAppState()
-  const id = s.openTaskId
-  const listItem = s.tasks.find((t) => t.id === id)
-  const detail = s.taskDetail && s.taskDetail.id === id ? s.taskDetail : null
-  const task: Task | undefined = detail ?? listItem
+  const { id, detail, item } = useOpenTask()
+  const task: Task | undefined = detail ?? item
   if (id === null || !s.boot) return null
   const boot = s.boot
 
@@ -41,16 +42,11 @@ export default function TaskDialog() {
   const archived = task.status === 'archived'
   const handles = boot.users.map((u) => u.handle)
 
-  const act = async (run: () => Promise<TaskDetail>) => {
-    try {
+  const act = (run: () => Promise<TaskDetail>) =>
+    notifyOnFailure(async () => {
       applyTaskDetail(await run())
-      void loadTasks()
-    } catch (err) {
-      notifyError(err)
-      throw err
-    }
-  }
-  const quiet = (run: () => Promise<TaskDetail>) => void act(run).catch(() => undefined)
+      refresh('tasks')
+    })
 
   return (
     <Dialog label={task.display_title} onClose={closeTask} zIndex={50} maxWidth={1000} darkMode>
@@ -103,7 +99,7 @@ export default function TaskDialog() {
               darkMode
               value={task.model}
               disabled={archived}
-              onChange={(model) => quiet(() => api.updateTask(task.id, { model }))}
+              onChange={(model) => runInBackground(act(() => api.updateTask(task.id, { model })))}
               options={boot.models.map((m) => ({ value: m, label: m }))}
               style={{ width: 'auto', minHeight: 32, fontSize: 13 }}
             />
@@ -112,12 +108,12 @@ export default function TaskDialog() {
           <TokenCounts session={task.session_tokens} harness={task.harness_tokens} darkMode style={{ color: dark.bright }} />
           <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
             {task.status === 'running' && (
-              <Button kind="darkOutline" compact onClick={() => quiet(() => api.stopTask(task.id))}>
+              <Button kind="darkOutline" compact onClick={() => runInBackground(act(() => api.stopTask(task.id)))}>
                 Stop
               </Button>
             )}
             {task.status === 'done' && (
-              <Button kind="darkOutline" compact onClick={() => quiet(() => api.archiveTask(task.id))}>
+              <Button kind="darkOutline" compact onClick={() => runInBackground(act(() => api.archiveTask(task.id)))}>
                 Archive
               </Button>
             )}
@@ -158,6 +154,13 @@ export default function TaskDialog() {
   )
 }
 
+const CHAT_HINT: Record<TaskStatus, { text: string; color: string; blink: boolean }> = {
+  running: { text: 'working', color: dark.dim, blink: true },
+  waiting_on_user: { text: 'waiting for your reply', color: dark.ask, blink: false },
+  done: { text: 'done · send a message to continue', color: dark.dim, blink: false },
+  archived: { text: 'archived · the chat stays readable', color: dark.dim, blink: false },
+}
+
 function Chat({
   task,
   events,
@@ -170,14 +173,7 @@ function Chat({
   handles: string[]
 }) {
   const now = serverNow()
-  const hint =
-    task.status === 'running'
-      ? { text: 'working', color: dark.dim, blink: true }
-      : task.status === 'waiting_on_user'
-        ? { text: 'waiting for your reply', color: dark.ask, blink: false }
-        : task.status === 'done'
-          ? { text: 'done · send a message to continue', color: dark.dim, blink: false }
-          : { text: 'archived · the chat stays readable', color: dark.dim, blink: false }
+  const hint = CHAT_HINT[task.status]
   return (
     // column-reverse keeps the view pinned to the newest message.
     <div

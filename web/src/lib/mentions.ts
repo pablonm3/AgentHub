@@ -35,3 +35,13 @@ export function mentionedHandles(text: string, handles: Iterable<string>): strin
   }
   return seen
 }
+
+/** An "@" and the letters typed after it, at the end of a draft (after whitespace or at its start). */
+export const TRAILING_MENTION = /(^|\s)@([A-Za-z]*)$/
+
+/** The draft with `@handle ` completing the mention being typed, or appended after a space. */
+export function withMention(draft: string, handle: string): string {
+  if (TRAILING_MENTION.test(draft)) return draft.replace(TRAILING_MENTION, `$1@${handle} `)
+  const separator = draft && !/\s$/.test(draft) ? ' ' : ''
+  return `${draft}${separator}@${handle} `
+}

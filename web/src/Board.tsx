@@ -1,7 +1,7 @@
 import { useRef, useState, type DragEvent } from 'react'
 import { api, type Ticket, type User } from './api'
 import AddTicketForm from './AddTicketForm'
-import { cardsOf, positionFor } from './lib/board'
+import { cardsOf, isAlreadyAt, positionFor } from './lib/board'
 import {
   applyTicketDetail,
   findUser,
@@ -12,18 +12,14 @@ import {
   useAppState,
 } from './store'
 import { color, font, pageTitle } from './theme'
-import { Avatar, CommentIcon, PlusIcon, StatusPill } from './ui'
+import { Avatar, CommentIcon, EmptyState, PlusIcon, StatusPill } from './ui'
 
 /** Move a ticket to a stage (before a card, or at the end) and save it. */
 export function moveTicket(tickets: Ticket[], id: number, stage: string, beforeId: number | null): void {
   const ticket = tickets.find((t) => t.id === id)
   if (!ticket || beforeId === id) return
+  if (isAlreadyAt(tickets, id, stage, beforeId)) return
   const position = positionFor(tickets, id, stage, beforeId)
-  const column = cardsOf(tickets, stage).map((t) => t.id)
-  const unchanged =
-    ticket.stage === stage &&
-    (beforeId === null ? column[column.length - 1] === id : column[column.indexOf(beforeId) - 1] === id)
-  if (unchanged) return
   moveTicketLocally(id, stage, position)
   api
     .updateTicket(id, { stage, position })
@@ -79,127 +75,160 @@ export default function Board() {
         </p>
       </div>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, padding: '0 24px 32px', overflowX: 'auto' }}>
-        {stages.map((stage) => {
-          const cards = cardsOf(tickets, stage.id)
-          const adding = addingIn === stage.id
-          return (
-            <section
-              key={stage.id}
-              aria-label={stage.name}
-              onDragOver={(e: DragEvent) => {
-                e.preventDefault()
-                e.dataTransfer.dropEffect = 'move'
-                if (dragOver !== stage.id) setDragOver(stage.id)
-              }}
-              onDrop={(e: DragEvent) => {
-                e.preventDefault()
-                drop(stage.id, null)
-              }}
-              style={{
-                flex: '1 0 256px',
-                maxWidth: 380,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 10,
-                padding: 12,
-                borderRadius: 12,
-                background: color.column,
-                boxShadow: `inset 0 0 0 2px ${dragging !== null && dragOver === stage.id ? color.accent : 'transparent'}`,
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '2px 4px' }}>
-                <h2 style={{ margin: 0, fontFamily: font.display, fontSize: 15, lineHeight: '20px', fontWeight: 600 }}>
-                  {stage.name}
-                </h2>
-                <span
-                  style={{
-                    minWidth: 26,
-                    padding: '2px 8px',
-                    borderRadius: 999,
-                    background: color.surface,
-                    color: color.ink2,
-                    fontSize: 12,
-                    lineHeight: '16px',
-                    fontWeight: 600,
-                    textAlign: 'center',
-                  }}
-                >
-                  {cards.length}
-                </span>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {cards.map((ticket) => (
-                  <Card
-                    key={ticket.id}
-                    ticket={ticket}
-                    assignee={findUser(boot.users, ticket.assignee_id)}
-                    faded={dragging === ticket.id}
-                    onDragStart={(e) => {
-                      dragId.current = ticket.id
-                      e.dataTransfer.effectAllowed = 'move'
-                      try {
-                        e.dataTransfer.setData('text/plain', ticket.key)
-                      } catch {
-                        // Some browsers refuse custom drag data; the ref carries the id anyway.
-                      }
-                      window.setTimeout(() => setDragging(ticket.id), 0)
-                    }}
-                    onDragEnd={endDrag}
-                    onDrop={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      drop(stage.id, ticket.id)
-                    }}
-                  />
-                ))}
-              </div>
-              {cards.length === 0 && !adding && (
-                <p
-                  style={{
-                    margin: 0,
-                    padding: '18px 12px',
-                    border: `1px dashed ${color.lineStrong}`,
-                    borderRadius: 10,
-                    color: color.muted,
-                    fontSize: 13,
-                    textAlign: 'center',
-                  }}
-                >
-                  No cards here. Drop one in or add a card.
-                </p>
-              )}
-              {adding ? (
-                <AddTicketForm stageId={stage.id} onClose={() => setAddingIn(null)} />
-              ) : (
-                <button
-                  type="button"
-                  className="wb-ghost"
-                  onClick={() => setAddingIn(stage.id)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    width: '100%',
-                    minHeight: 44,
-                    padding: '0 10px',
-                    border: 0,
-                    borderRadius: 9,
-                    background: 'transparent',
-                    color: color.ink2,
-                    fontSize: 13,
-                    fontWeight: 600,
-                    textAlign: 'left',
-                  }}
-                >
-                  <PlusIcon />
-                  Add a card
-                </button>
-              )}
-            </section>
-          )
-        })}
+        {stages.map((stage) => (
+          <Column
+            key={stage.id}
+            stage={stage}
+            cards={cardsOf(tickets, stage.id)}
+            users={boot.users}
+            adding={addingIn === stage.id}
+            onAdd={() => setAddingIn(stage.id)}
+            onCloseAdd={() => setAddingIn(null)}
+            highlighted={dragging !== null && dragOver === stage.id}
+            fadedId={dragging}
+            onDragOverColumn={() => {
+              if (dragOver !== stage.id) setDragOver(stage.id)
+            }}
+            onDragStartCard={(ticket) => {
+              dragId.current = ticket.id
+              // Fade only after the browser has captured the drag image; the ref holds the id meanwhile.
+              window.setTimeout(() => setDragging(ticket.id), 0)
+            }}
+            onDragEnd={endDrag}
+            onDrop={(beforeId) => drop(stage.id, beforeId)}
+          />
+        ))}
       </div>
     </main>
+  )
+}
+
+/** One stage of the board: header and count, its cards, the empty state and the add-card toggle. */
+function Column({
+  stage,
+  cards,
+  users,
+  adding,
+  onAdd,
+  onCloseAdd,
+  highlighted,
+  fadedId,
+  onDragOverColumn,
+  onDragStartCard,
+  onDragEnd,
+  onDrop,
+}: {
+  stage: { id: string; name: string }
+  cards: Ticket[]
+  users: User[]
+  adding: boolean
+  onAdd: () => void
+  onCloseAdd: () => void
+  highlighted: boolean
+  fadedId: number | null
+  onDragOverColumn: () => void
+  onDragStartCard: (ticket: Ticket) => void
+  onDragEnd: () => void
+  onDrop: (beforeId: number | null) => void
+}) {
+  return (
+    <section
+      aria-label={stage.name}
+      onDragOver={(e: DragEvent) => {
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+        onDragOverColumn()
+      }}
+      onDrop={(e: DragEvent) => {
+        e.preventDefault()
+        onDrop(null)
+      }}
+      style={{
+        flex: '1 0 256px',
+        maxWidth: 380,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 10,
+        padding: 12,
+        borderRadius: 12,
+        background: color.column,
+        boxShadow: `inset 0 0 0 2px ${highlighted ? color.accent : 'transparent'}`,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '2px 4px' }}>
+        <h2 style={{ margin: 0, fontFamily: font.display, fontSize: 15, lineHeight: '20px', fontWeight: 600 }}>
+          {stage.name}
+        </h2>
+        <span
+          style={{
+            minWidth: 26,
+            padding: '2px 8px',
+            borderRadius: 999,
+            background: color.surface,
+            color: color.ink2,
+            fontSize: 12,
+            lineHeight: '16px',
+            fontWeight: 600,
+            textAlign: 'center',
+          }}
+        >
+          {cards.length}
+        </span>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {cards.map((ticket) => (
+          <Card
+            key={ticket.id}
+            ticket={ticket}
+            assignee={findUser(users, ticket.assignee_id)}
+            faded={fadedId === ticket.id}
+            onDragStart={(e) => {
+              e.dataTransfer.effectAllowed = 'move'
+              try {
+                e.dataTransfer.setData('text/plain', ticket.key)
+              } catch {
+                // Some browsers refuse custom drag data; the ref carries the id anyway.
+              }
+              onDragStartCard(ticket)
+            }}
+            onDragEnd={onDragEnd}
+            onDrop={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onDrop(ticket.id)
+            }}
+          />
+        ))}
+      </div>
+      {cards.length === 0 && !adding && <EmptyState compact>No cards here. Drop one in or add a card.</EmptyState>}
+      {adding ? (
+        <AddTicketForm stageId={stage.id} onClose={onCloseAdd} />
+      ) : (
+        <button
+          type="button"
+          className="wb-ghost"
+          onClick={onAdd}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            width: '100%',
+            minHeight: 44,
+            padding: '0 10px',
+            border: 0,
+            borderRadius: 9,
+            background: 'transparent',
+            color: color.ink2,
+            fontSize: 13,
+            fontWeight: 600,
+            textAlign: 'left',
+          }}
+        >
+          <PlusIcon />
+          Add a card
+        </button>
+      )}
+    </section>
   )
 }
 

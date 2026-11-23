@@ -1,9 +1,9 @@
 import { useId, useMemo, useRef, useState } from 'react'
 import { errorMessage } from './api'
-import { mentionedHandles } from './lib/mentions'
+import { mentionedHandles, TRAILING_MENTION, withMention } from './lib/mentions'
 import { useAppState } from './store'
 import { color, textarea } from './theme'
-import { Avatar, Button } from './ui'
+import { Avatar, Button, ErrorText } from './ui'
 
 /**
  * The comment field used by the ticket dialog and by each Activity entry: a textarea, "Tag
@@ -35,16 +35,13 @@ export default function CommentBox({
   const mentioned = mentionedHandles(draft, handles)
 
   // While a handle is being typed after "@", only the chips that match it are offered.
-  const typed = /(^|\s)@([A-Za-z]*)$/.exec(draft)
+  const typed = TRAILING_MENTION.exec(draft)
   const query = typed ? typed[2].toLowerCase() : ''
   const matching = users.filter((u) => u.handle.toLowerCase().startsWith(query))
   const chips = query && matching.length ? matching : users
 
   const insertMention = (handle: string) => {
-    const next = /(^|\s)@[A-Za-z]*$/.test(draft)
-      ? draft.replace(/@[A-Za-z]*$/, `@${handle} `)
-      : `${draft}${draft && !/\s$/.test(draft) ? ' ' : ''}@${handle} `
-    setDraft(next)
+    setDraft(withMention(draft, handle))
     field.current?.focus()
   }
 
@@ -125,9 +122,7 @@ export default function CommentBox({
         </Button>
       </div>
       {error && (
-        <p role="alert" style={{ margin: 0, color: color.errorInk, fontSize: 13 }}>
-          {error}
-        </p>
+        <ErrorText>{error}</ErrorText>
       )}
     </div>
   )

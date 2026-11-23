@@ -264,6 +264,34 @@ export function FieldLabel({ htmlFor, children }: { htmlFor?: string; children: 
   )
 }
 
+/** The dashed box shown where a list is empty; `compact` inside a board column. */
+export function EmptyState({ children, compact = false }: { children: ReactNode; compact?: boolean }) {
+  return (
+    <p
+      style={{
+        margin: 0,
+        padding: compact ? '18px 12px' : '28px 16px',
+        border: `1px dashed ${color.lineStrong}`,
+        borderRadius: compact ? 10 : 12,
+        color: color.muted,
+        fontSize: compact ? 13 : undefined,
+        textAlign: 'center',
+      }}
+    >
+      {children}
+    </p>
+  )
+}
+
+/** A form's error line, announced to screen readers. */
+export function ErrorText({ children }: { children: ReactNode }) {
+  return (
+    <p role="alert" style={{ margin: 0, color: color.errorInk, fontSize: 13 }}>
+      {children}
+    </p>
+  )
+}
+
 /** A title shown as text with a pencil button; editing saves on Enter or blur. */
 export function EditableTitle({
   value,

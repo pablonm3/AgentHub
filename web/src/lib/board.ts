@@ -24,3 +24,12 @@ export function positionFor(cards: Placed[], movingId: number, stage: string, be
   const prev = column[at - 1]
   return prev ? (prev.position + next.position) / 2 : next.position - 1
 }
+
+/** True when `id` already sits in `stage` directly before `beforeId`, or already last when `beforeId` is null. */
+export function isAlreadyAt(cards: Placed[], id: number, stage: string, beforeId: number | null): boolean {
+  const column = cardsOf(cards, stage).map((c) => c.id)
+  if (!column.includes(id)) return false
+  if (beforeId === null) return column[column.length - 1] === id
+  const before = column.indexOf(beforeId)
+  return before > 0 && column[before - 1] === id
+}

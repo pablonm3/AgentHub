@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { api, errorMessage, type Login, type User } from './api'
 import { applyBoot, applyUser, useAppState } from './store'
 import { color, font, pageTitle, sectionHeading, textarea } from './theme'
-import { Avatar, Button, Select } from './ui'
+import { Avatar, Button, ErrorText, Select } from './ui'
 
 export default function SettingsPage() {
   const { boot } = useAppState()
@@ -224,9 +224,7 @@ function LoginStatus({ fallback }: { fallback: Login }) {
           <p style={{ margin: 0, color: color.muted, fontSize: 13, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{login.detail}</p>
         )}
         {error && (
-          <p role="alert" style={{ margin: 0, color: color.errorInk, fontSize: 13 }}>
-            {error}
-          </p>
+          <ErrorText>{error}</ErrorText>
         )}
         <div>
           <Button kind="outline" compact onClick={() => void check()} disabled={busy}>

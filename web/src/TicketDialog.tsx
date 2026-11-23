@@ -8,14 +8,13 @@ import {
   applyTicketDetail,
   closeTicket,
   findUser,
-  loadActivity,
-  loadTasks,
-  loadTicketDetail,
-  loadTickets,
-  notifyError,
+  notifyOnFailure,
   openTask,
+  refresh,
+  runInBackground,
   serverNow,
   useAppState,
+  useOpenTicket,
   userName,
 } from './store'
 import { color, font, sectionHeading, textarea } from './theme'
@@ -23,26 +22,19 @@ import { Avatar, Button, CloseButton, Dialog, EditableTitle, Markdown, Select, S
 
 export default function TicketDialog() {
   const s = useAppState()
-  const id = s.openTicketId
-  const listItem = s.tickets.find((t) => t.id === id)
-  const detail = s.ticketDetail && s.ticketDetail.id === id ? s.ticketDetail : null
-  const ticket = detail ?? listItem
+  const { id, detail, item } = useOpenTicket()
+  const ticket = detail ?? item
   if (id === null || !s.boot) return null
 
   const boot = s.boot
   const handles = boot.users.map((u) => u.handle)
 
-  const save = async (patch: TicketPatch) => {
-    try {
+  const save = (patch: TicketPatch) =>
+    notifyOnFailure(async () => {
       applyTicketDetail(await api.updateTicket(id, patch))
-      void loadTickets()
-      void loadTasks()
-    } catch (err) {
-      notifyError(err)
-      throw err
-    }
-  }
-  const quietSave = (patch: TicketPatch) => void save(patch).catch(() => undefined)
+      refresh('tickets', 'tasks')
+    })
+  const saveInBackground = (patch: TicketPatch) => runInBackground(save(patch))
 
   if (!ticket) {
     return (
@@ -115,7 +107,7 @@ export default function TicketDialog() {
                     aria-pressed={on}
                     onClick={() => {
                       if (on) return
-                      quietSave({ stage: g.id, position: positionFor(s.tickets, ticket.id, g.id, null) })
+                      saveInBackground({ stage: g.id, position: positionFor(s.tickets, ticket.id, g.id, null) })
                     }}
                     style={{
                       minHeight: 40,
@@ -138,7 +130,7 @@ export default function TicketDialog() {
             <Select
               ariaLabel="Assigned to"
               value={ticket.assignee_id}
-              onChange={(assignee_id) => quietSave({ assignee_id })}
+              onChange={(assignee_id) => saveInBackground({ assignee_id })}
               options={boot.users.map((u) => ({ value: u.id, label: u.name }))}
             />
           </Section>
@@ -146,7 +138,7 @@ export default function TicketDialog() {
             <Select
               ariaLabel="Model"
               value={ticket.model}
-              onChange={(model) => quietSave({ model })}
+              onChange={(model) => saveInBackground({ model })}
               options={boot.models.map((m) => ({ value: m, label: m }))}
             />
           </Section>
@@ -272,10 +264,7 @@ function Comments({ detail, users, handles }: { detail: TicketDetail; users: Use
 
   const post = async (body: string) => {
     await api.comment(detail.id, body)
-    void loadTicketDetail()
-    void loadTickets()
-    void loadTasks()
-    void loadActivity()
+    refresh('tickets', 'tasks', 'activity')
   }
 
   return (

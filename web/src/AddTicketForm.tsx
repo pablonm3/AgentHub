@@ -1,14 +1,14 @@
 import { useId, useState, type FormEvent } from 'react'
 import { api, errorBody, errorMessage, type NewTicket } from './api'
 import { repoWebUrl } from './lib/format'
-import { applyTicketDetail, loadBoot, loadTasks, loadTickets, notify, useAppState } from './store'
+import { applyTicketDetail, notify, refresh, useAppState } from './store'
 import { color, font, input, textarea } from './theme'
-import { Button, FieldLabel, Select } from './ui'
+import { Button, ErrorText, FieldLabel, Select } from './ui'
 
 const NEW_PROJECT = '__new__'
 const NO_PROJECT = '__none__'
 
-interface Refusal {
+interface NewProjectError {
   message: string
   createdRepo: string | null
 }
@@ -28,7 +28,7 @@ export default function AddTicketForm({ stageId, onClose }: { stageId: string; o
   const [repoUrl, setRepoUrl] = useState('')
   const [busy, setBusy] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
-  const [refusal, setRefusal] = useState<Refusal | null>(null)
+  const [newProjectError, setNewProjectError] = useState<NewProjectError | null>(null)
 
   if (!boot) return null
   const isNew = project === NEW_PROJECT
@@ -37,7 +37,7 @@ export default function AddTicketForm({ stageId, onClose }: { stageId: string; o
     e?.preventDefault()
     if (busy) return
     setFormError(null)
-    setRefusal(null)
+    setNewProjectError(null)
     const base = { title: title.trim(), description: description.trim(), stage: stageId, assignee_id: assignee, model }
     if (!base.title) {
       setFormError('Give the card a title.')
@@ -47,7 +47,7 @@ export default function AddTicketForm({ stageId, onClose }: { stageId: string; o
     if (isNew) {
       const name = projectName.trim()
       if (!name) {
-        setRefusal({ message: 'Give the new project a name.', createdRepo: null })
+        setNewProjectError({ message: 'Give the new project a name.', createdRepo: null })
         return
       }
       const url = repoUrl.trim()
@@ -60,14 +60,12 @@ export default function AddTicketForm({ stageId, onClose }: { stageId: string; o
       const detail = await api.createTicket(body)
       applyTicketDetail(detail)
       if (detail.warning) notify('warning', detail.warning)
-      void loadTickets()
-      void loadTasks()
-      if (isNew) void loadBoot()
+      refresh('tickets', 'tasks', ...(isNew ? (['projects'] as const) : []))
       onClose()
     } catch (err) {
       if (isNew) {
         const created = errorBody(err).created_repo
-        setRefusal({ message: errorMessage(err), createdRepo: typeof created === 'string' && created ? created : null })
+        setNewProjectError({ message: errorMessage(err), createdRepo: typeof created === 'string' && created ? created : null })
       } else {
         setFormError(errorMessage(err))
       }
@@ -133,7 +131,7 @@ export default function AddTicketForm({ stageId, onClose }: { stageId: string; o
         value={project}
         onChange={(v) => {
           setProject(v)
-          setRefusal(null)
+          setNewProjectError(null)
         }}
         disabled={busy}
         options={options}
@@ -175,14 +173,14 @@ export default function AddTicketForm({ stageId, onClose }: { stageId: string; o
             Leave the URL empty to create a private GitHub repository named <strong>{shownName}</strong> on the
             account <code style={{ fontFamily: font.mono }}>gh</code> is logged in with.
           </p>
-          {refusal && (
+          {newProjectError && (
             <div role="alert" style={{ color: color.errorInk, fontSize: 13, lineHeight: '18px', overflowWrap: 'anywhere' }}>
-              <p style={{ margin: 0 }}>{refusal.message}</p>
-              {refusal.createdRepo && (
+              <p style={{ margin: 0 }}>{newProjectError.message}</p>
+              {newProjectError.createdRepo && (
                 <p style={{ margin: '4px 0 0' }}>
                   Repository created:{' '}
-                  <a href={repoWebUrl(refusal.createdRepo) ?? refusal.createdRepo} target="_blank" rel="noopener noreferrer">
-                    {refusal.createdRepo}
+                  <a href={repoWebUrl(newProjectError.createdRepo) ?? newProjectError.createdRepo} target="_blank" rel="noopener noreferrer">
+                    {newProjectError.createdRepo}
                   </a>
                 </p>
               )}
@@ -191,9 +189,7 @@ export default function AddTicketForm({ stageId, onClose }: { stageId: string; o
         </div>
       )}
       {formError && (
-        <p role="alert" style={{ margin: 0, color: color.errorInk, fontSize: 13 }}>
-          {formError}
-        </p>
+        <ErrorText>{formError}</ErrorText>
       )}
       <div style={{ display: 'flex', gap: 8 }}>
         <Button kind="primary" type="submit" disabled={busy} style={{ minHeight: 44 }}>
