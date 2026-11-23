@@ -209,8 +209,9 @@ class Tasks:
             if task["status"] == "archived":
                 raise TaskError("this task is archived and takes no further messages", 409)
             self.add_event(task_id, kind, text, comment_id=comment_id, queued=True)
-            if task_id not in self._active:
+            if task["status"] != "running":  # also while a stopped turn is still finishing
                 self._set_status(task_id, "running", reason=None)
+            if task_id not in self._active:
                 self._kick(task_id)
         self._publish(task_id)
         return self.view(task_id)
@@ -473,10 +474,10 @@ class Tasks:
         with self.lock:
             self._active.pop(task_id, None)
             task = self.get(task_id)
-            if active.stopped or task["status"] != "running":
+            if self._queued(task_id) and task["status"] != "archived":
+                self._kick(task_id)  # also a message sent after Stop, while this turn was finishing
+            elif active.stopped or task["status"] != "running":
                 pass  # stop already set the status
-            elif self._queued(task_id):
-                self._kick(task_id)
             elif self.hub.bridge.pending_gate(task_id):
                 self._set_status(task_id, "waiting_on_user", reason=reason)
             elif self.hub.bridge.has_live_run(task_id) and outcome.ok:
