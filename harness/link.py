@@ -73,7 +73,7 @@ def _exclude_skills(worktree: Path, report: list[str]) -> None:
 def link_worktree(layout: Layout, manifest: Manifest, project: str, worktree: Path, codex: bool = False) -> list[str]:
     proj = manifest.project(project)
     report: list[str] = []
-    # by name, a project skill in place of a general one it shares the name with
+    # a project skill replaces a general skill of the same name
     skills = {s.name: s for s in _skill_dirs(layout.general_skills) + _skill_dirs(layout.private_path(proj.skills))}
     for skill in skills.values():
         _symlink(skill, worktree / ".claude" / "skills" / skill.name, report)

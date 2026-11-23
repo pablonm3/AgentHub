@@ -37,7 +37,7 @@ def _skill(folder: Path, text: str = "---\nname: x\n---\n") -> Path:
 def test_three_root_layout_places_each_path_under_its_root(tmp_path):
     # Constraint: the manifest, project AGENTS.md files and project skills live in the private root; tickets, runs,
     #             logs, worktrees and the archive in the data root; the rest in the code root. The write boundary
-    #             protects what it protected before, the project skills now under the private root.
+    #             protects the same paths as with one root, the project skills under the private root.
     # Input: Layout(code, private_root=code/private, data_root=code/data/orchestrator); a single-root Layout
     # Expected output: each path under its root; protected_paths lists code skills, private project skills,
     #                  workflows, GENERAL.md, the private manifest and the source; one root keeps the old five

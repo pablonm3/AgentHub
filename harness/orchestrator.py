@@ -1270,7 +1270,7 @@ def pending_question(layout: Layout, run_id: str) -> dict | None:
     pending = state.get("pending_chat")
     if state.status != "paused" or not pending:
         return None
-    # only for _render_chat_prompt; constructing writes nothing since settings moved to _write_settings
+    # only for _render_chat_prompt; constructing an Orchestrator writes no file
     orch = Orchestrator(layout, load_manifest(layout), load_workflow(layout, state["workflow"]), state, quiet=True)
     return {
         "kind": pending["kind"],
