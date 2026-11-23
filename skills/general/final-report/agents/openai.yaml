@@ -1,0 +1,4 @@
+interface:
+  display_name: "Final Report"
+  short_description: "Concise report of a finished run."
+  default_prompt: "Use $final-report for this run."

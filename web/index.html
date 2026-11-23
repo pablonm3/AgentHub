@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AgentHub</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%232F5BEA'/%3E%3Crect x='3' y='3.5' width='2.5' height='9' rx='1' fill='white'/%3E%3Crect x='6.75' y='3.5' width='2.5' height='6' rx='1' fill='white'/%3E%3Crect x='10.5' y='3.5' width='2.5' height='7.5' rx='1' fill='white'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@600;700&display=swap" />
+    <style>
+      body { margin: 0; background: #F3F4F7 }
+      * { box-sizing: border-box }
+      button, input, textarea, select { font: inherit; color: inherit }
+      button { cursor: pointer }
+      button:disabled { cursor: not-allowed; opacity: 0.55 }
+      a { color: #1E3FB8 } a:hover { color: #142C85 }
+      :focus-visible { outline: 2px solid #2F5BEA; outline-offset: 2px }
+      .wb-dark :focus-visible { outline-color: #8FB0FF }
+      .wb-dark a { color: #8FB0FF } .wb-dark a:hover { color: #B8CCFF }
+      .wb-card:hover, .wb-row:hover { box-shadow: 0 2px 10px rgba(22, 26, 34, 0.12) }
+      .wb-ghost:hover:not(:disabled) { box-shadow: inset 0 0 0 999px rgba(22, 26, 34, 0.06) }
+      .wb-ghost-dark:hover:not(:disabled) { box-shadow: inset 0 0 0 999px rgba(255, 255, 255, 0.08) }
+      .wb-term-input::placeholder { color: #8B94A7 }
+      @keyframes wb-pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.35 } }
+      @keyframes wb-blink { 0%, 49% { opacity: 1 } 50%, 100% { opacity: 0 } }
+      @media (prefers-reduced-motion: reduce) { * { animation: none !important } }
+
+      .ah-mention { color: #1E3FB8; background: #E3EAFF; font-weight: 600; padding: 1px 5px; border-radius: 5px }
+      .wb-dark .ah-mention { color: #DCE5FF; background: #2A3C78 }
+      .ah-md { overflow-wrap: anywhere }
+      .ah-md > :first-child { margin-top: 0 }
+      .ah-md > :last-child { margin-bottom: 0 }
+      .ah-md p, .ah-md ul, .ah-md ol, .ah-md pre, .ah-md blockquote, .ah-md table { margin: 0 0 8px }
+      .ah-md p { white-space: pre-wrap }
+      .ah-md ul, .ah-md ol { padding-left: 22px }
+      .ah-md h1, .ah-md h2, .ah-md h3, .ah-md h4 { margin: 10px 0 6px; font-size: 15px; line-height: 22px }
+      .ah-md code { font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace; font-size: 12.5px; padding: 1px 4px; border-radius: 4px; background: #EEF0F4 }
+      .ah-md pre { padding: 10px 12px; border-radius: 8px; background: #EEF0F4; overflow-x: auto }
+      .ah-md pre code { padding: 0; background: transparent }
+      .ah-md blockquote { padding-left: 10px; border-left: 3px solid #D9DDE5; color: #3A414E }
+      .ah-md table { border-collapse: collapse }
+      .ah-md th, .ah-md td { padding: 3px 8px; border: 1px solid #D9DDE5; text-align: left }
+      .wb-dark .ah-md code, .wb-dark .ah-md pre { background: #0B0E13 }
+      .wb-dark .ah-md blockquote { border-left-color: #4A556B; color: #A3ACBD }
+      .wb-dark .ah-md th, .wb-dark .ah-md td { border-color: #2A3140 }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

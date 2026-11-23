@@ -1,0 +1,4 @@
+interface:
+  display_name: "Test Case Builder"
+  short_description: "Ephemeral test cases tied to acceptance criteria."
+  default_prompt: "Use $testcase-builder to derive test cases from this spec."

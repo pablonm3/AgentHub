@@ -1,0 +1,4 @@
+interface:
+  display_name: "Archive Old Work"
+  short_description: "Archive finished runs by age."
+  default_prompt: "Use $archive-old-work 2 weeks."

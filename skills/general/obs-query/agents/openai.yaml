@@ -1,0 +1,4 @@
+interface:
+  display_name: "Observability Query"
+  short_description: "Answer run questions from SigNoz."
+  default_prompt: "Use $obs-query: what did this run cost per step?"

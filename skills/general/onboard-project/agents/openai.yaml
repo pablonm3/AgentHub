@@ -1,0 +1,4 @@
+interface:
+  display_name: "Onboard Project"
+  short_description: "Fill a project's AGENTS.md and setup list."
+  default_prompt: "Use $onboard-project for this project."

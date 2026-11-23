@@ -1,0 +1,4 @@
+interface:
+  display_name: "Spec"
+  short_description: "Short testable spec with WHEN/THEN acceptance criteria."
+  default_prompt: "Use $spec to write the spec for this ticket and context."

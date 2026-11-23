@@ -1,0 +1,4 @@
+interface:
+  display_name: "Readability Review"
+  short_description: "Cognitive-load review of a branch diff."
+  default_prompt: "Use $readability-review on this branch against its base."

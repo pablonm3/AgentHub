@@ -1,0 +1,66 @@
+# regression-v1 — regression only (docs/WORKFLOW_SPEC.md section 10)
+#
+# Compares a branch (`compare_branch` in the ticket) against the commit it forked from on
+# `base_branch`, on the eval suites and case keys the ticket names. No spec, plan, build or
+# gates: setup, the two-ref comparison, scratch cleanup, the final report, the run log.
+#
+# Step ids 15b, 15c, 16 and 18 are the ids the same skills and actions carry in feature-v1, so
+# telemetry and AGENTS.md references to "step 15b" mean the same skill in both workflows.
+# Placeholders as in feature-v1/workflow.yaml.
+
+name: regression-v1
+
+groups:
+  - { name: intake,     steps: ["1", "2"] }
+  - { name: regression, steps: ["15b", "15c"] }
+  - { name: finish,     steps: ["16", "18"] }
+
+setup_chat_prompt: prompts/02-setup-chat.md
+# sent to a step's own session when it stopped unfinished (usage limit, missing output, failure): 5.8
+continue_prompt: prompts/continue-step.md
+
+steps:
+  - id: "1"
+    label: ticket
+    actor: human
+    display: "tickets/${feature}.md"
+
+  - id: "2"
+    label: start
+    actor: orchestrator
+    action: start_run
+    display: "worktrees/${project}/${run_id}"
+
+  - id: "15b"
+    skill: regression-testing-report
+    label: regression-testing-report
+    prompt: prompts/15b-regression-testing-report.md
+    reads:
+      ticket: "runs/${run_id}/ticket_${feature}_${n}*.md"
+    writes:
+      regression_report: "runs/${run_id}/regression_report_${feature}_${n}${v}.md"
+      regression_csv: "runs/${run_id}/regression_${feature}_${n}${v}.csv"
+
+  - id: "15c"
+    skill: langsmith-cleanup
+    label: langsmith-cleanup
+    prompt: prompts/15c-langsmith-cleanup.md
+    writes:
+      langsmith_cleanup: "runs/${run_id}/langsmith_cleanup_${feature}_${n}${v}.md"
+
+  - id: "16"
+    skill: regression-final-report
+    label: regression-final-report
+    prompt: prompts/16-regression-final-report.md
+    reads:
+      ticket: "runs/${run_id}/ticket_${feature}_${n}*.md"
+      regression_report: "runs/${run_id}/regression_report_${feature}_${n}*.md"
+      regression_csv: "runs/${run_id}/regression_${feature}_${n}*.csv"
+      langsmith_cleanup: "runs/${run_id}/langsmith_cleanup_${feature}_${n}*.md"
+    writes:
+      final_report: "runs/${run_id}/final_report_${feature}_${n}${v}.md"
+
+  - id: "18"
+    label: run log
+    actor: orchestrator
+    action: run_log

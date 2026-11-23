@@ -1,0 +1,4 @@
+interface:
+  display_name: "Regression Final Report"
+  short_description: "Final report of a regression-only run: deltas, timing, file paths."
+  default_prompt: "Use $regression-final-report for this run."

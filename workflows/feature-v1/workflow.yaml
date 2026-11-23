@@ -1,0 +1,241 @@
+# feature-v1 — the graph (docs/WORKFLOW_SPEC.md section 2 and 5.4)
+#
+# Placeholders in reads/writes/messages use ${name}: feature, n, run_id, project,
+# base_branch, branch, worktree, run_dir. In `writes`:
+#   ${v}      version suffix, blank for the first execution, _v<k> afterwards
+#   _v${k}    always numbered (decision files)
+# A `reads` pattern ending in *.md resolves to the highest _v<k> present (section 1).
+# Steps reference skills by name only; behaviour differences live in prompts/.
+
+name: feature-v1
+
+groups:
+  - { name: intake,      steps: ["1", "2"] }
+  - { name: planning,    steps: ["4", "5", "6", "7"] }
+  - { name: test cases,  steps: ["8"] }
+  - { name: build loop,  steps: ["9", "10", "11", "12", "13", "13b", "14"], loop: true }
+  - { name: finish,      steps: ["15", "15b", "15c", "16", "17", "18", "18b", "19"] }
+
+# re-entry after a question chat (5.7 table): which artifact got a new version → step
+chat_reentry: { spec: "6", plan: "9", ticket: "4" }
+setup_chat_prompt: prompts/02-setup-chat.md
+# sent to a step's own session when it stopped unfinished (usage limit, missing output, failure): 5.8
+continue_prompt: prompts/continue-step.md
+
+steps:
+  - id: "1"
+    label: ticket
+    actor: human
+    display: "tickets/${feature}.md"
+
+  - id: "2"
+    label: start
+    actor: orchestrator
+    action: start_run
+    display: "worktrees/${project}/${run_id}"
+
+  - id: "4"
+    skill: build-context
+    label: build-context
+    prompt: prompts/04-build-context.md
+    reads:
+      ticket: "runs/${run_id}/ticket_${feature}_${n}*.md"
+    writes:
+      context: "runs/${run_id}/context_${feature}_${n}.md"
+    on_status: { not_reproduced: chat }
+    chat_skill: build-context
+    chat_prompt: prompts/04-build-context-chat.md
+
+  - id: "5"
+    skill: spec
+    label: spec
+    prompt: prompts/05-spec.md
+    reads:
+      ticket: "runs/${run_id}/ticket_${feature}_${n}*.md"
+      context: "runs/${run_id}/context_${feature}_${n}.md"
+    writes:
+      spec: "runs/${run_id}/spec_${feature}_${n}.md"
+    skip_when: defaults.spec
+
+  - id: "6"
+    skill: plan
+    label: plan
+    prompt: prompts/06-plan.md
+    reads:
+      spec: "runs/${run_id}/spec_${feature}_${n}*.md"
+      context: "runs/${run_id}/context_${feature}_${n}.md"
+      ticket: "runs/${run_id}/ticket_${feature}_${n}*.md"
+      previous_plan: "runs/${run_id}/plan_${feature}_${n}*.md"
+    writes:
+      plan: "runs/${run_id}/plan_${feature}_${n}${v}.md"
+      plan_short: "runs/${run_id}/plan_short_${feature}_${n}${v}.md"
+
+  - id: "7"
+    label: GATE 1
+    gate: human
+    actor: human
+    message: "Review spec_${feature}_${n}.md and plan_short_${feature}_${n}.md (and plan_${feature}_${n}.md). Ask for changes, then say you are done to continue the run."
+    chat_skill: plan
+    chat_prompt: prompts/07-gate1-chat.md
+    on_new_version: { spec: "6" }   # a new plan version or nothing → next step (8)
+
+  - id: "8"
+    skill: testcase-builder
+    label: testcase-builder
+    prompt: prompts/08-testcase-builder.md
+    reads:
+      spec: "runs/${run_id}/spec_${feature}_${n}*.md"
+      plan: "runs/${run_id}/plan_${feature}_${n}*.md"
+      context: "runs/${run_id}/context_${feature}_${n}.md"
+    writes:
+      testing: "runs/${run_id}/testing_${feature}_${n}${v}.md"
+
+  - id: "9"
+    skill: build-plan
+    label: build-plan
+    prompt: prompts/09-build-plan.md
+    writes_commit: true
+    reads:
+      spec: "runs/${run_id}/spec_${feature}_${n}*.md"
+      plan: "runs/${run_id}/plan_${feature}_${n}*.md"
+      context: "runs/${run_id}/context_${feature}_${n}.md"
+
+  - id: "10"
+    skill: code-review
+    label: code-review
+    prompt: prompts/10-code-review.md
+    # a repeat in the build loop covers only the commits since the last finished review, unless
+    # defaults.review_scope is full, the spec got a new version, or the change exceeds review_incremental_*
+    incremental_prompt: prompts/10-code-review-incremental.md
+    reads:
+      spec: "runs/${run_id}/spec_${feature}_${n}*.md"
+      plan: "runs/${run_id}/plan_${feature}_${n}*.md"
+    writes:
+      review: "runs/${run_id}/review_${feature}_${n}${v}.md"
+
+  - id: "11"
+    skill: readability-review
+    label: readability-review
+    prompt: prompts/11-readability-review.md
+    reads:
+      spec: "runs/${run_id}/spec_${feature}_${n}*.md"
+      plan: "runs/${run_id}/plan_${feature}_${n}*.md"
+    writes:
+      readability: "runs/${run_id}/readability_${feature}_${n}${v}.md"
+
+  - id: "12"
+    skill: apply-reviews
+    label: apply-reviews
+    prompt: prompts/12-apply-reviews.md
+    writes_commit: true
+    reads:
+      review: "runs/${run_id}/review_${feature}_${n}*.md"
+      readability: "runs/${run_id}/readability_${feature}_${n}*.md"
+    writes:
+      reviews_applied: "runs/${run_id}/reviews_applied_${feature}_${n}${v}.md"
+
+  - id: "13"
+    skill: run-tests
+    label: run-tests
+    prompt: prompts/13-run-tests.md
+    reads:
+      testing: "runs/${run_id}/testing_${feature}_${n}*.md"
+      spec: "runs/${run_id}/spec_${feature}_${n}*.md"
+    writes:
+      testing_feedback: "runs/${run_id}/testing_feedback_${feature}_${n}${v}.md"
+
+  - id: "13b"
+    skill: run-tests-ui
+    label: run-tests-ui
+    prompt: prompts/13b-run-tests-ui.md
+    reads:
+      testing: "runs/${run_id}/testing_${feature}_${n}*.md"
+      spec: "runs/${run_id}/spec_${feature}_${n}*.md"
+    writes:
+      testing_feedback_ui: "runs/${run_id}/testing_feedback_ui_${feature}_${n}${v}.md"
+    # headless browser in a fresh in-memory profile, so the step needs neither the human's Chrome
+    # nor the Claude in Chrome extension; page snapshots go to the run log, screenshots to the
+    # evidence folder the prompt names (pass an absolute path: a relative one lands in the worktree)
+    mcp_servers:
+      playwright:
+        command: npx
+        args: ["-y", "@playwright/mcp@0.0.86", "--headless", "--isolated",
+               "--output-dir", "${run_dir}/log/playwright_13b_iter${iteration}"]
+
+  - id: "14"
+    skill: triage
+    label: triage
+    prompt: prompts/14-triage.md
+    reads:
+      artifacts: "runs/${run_id}/*_${feature}_${n}*.md"
+    writes:
+      decision: "runs/${run_id}/decision_${feature}_${n}_v${k}.md"
+      # on `new_plan` the skill also writes the next plan version, named in the prompt (${plan_next})
+    on_decision: { done: "15", new_plan: "9", spec_issue: chat }
+    max_loops: defaults.max_iterations
+    chat_skill: triage
+    chat_prompt: prompts/14-triage-chat.md
+
+  - id: "15"
+    skill: fix_ai_comments
+    label: fix-ai-comments
+    prompt: prompts/15-fix-ai-comments.md
+    writes_commit: true
+
+  - id: "15b"
+    skill: regression-testing-report
+    label: regression-testing-report
+    prompt: prompts/15b-regression-testing-report.md
+    reads:
+      testing: "runs/${run_id}/testing_${feature}_${n}*.md"
+      testing_feedback: "runs/${run_id}/testing_feedback_${feature}_${n}*.md"
+      spec: "runs/${run_id}/spec_${feature}_${n}*.md"
+    writes:
+      regression_report: "runs/${run_id}/regression_report_${feature}_${n}${v}.md"
+      regression_csv: "runs/${run_id}/regression_${feature}_${n}${v}.csv"
+    skip_when: defaults.regression
+
+  - id: "15c"
+    skill: langsmith-cleanup
+    label: langsmith-cleanup
+    prompt: prompts/15c-langsmith-cleanup.md
+    writes:
+      langsmith_cleanup: "runs/${run_id}/langsmith_cleanup_${feature}_${n}${v}.md"
+    skip_when: defaults.langsmith_cleanup
+
+  - id: "16"
+    skill: final-report
+    label: final-report
+    prompt: prompts/16-final-report.md
+    reads:
+      artifacts: "runs/${run_id}/*_${feature}_${n}*.md"
+    writes:
+      final_report: "runs/${run_id}/final_report_${feature}_${n}${v}.md"
+
+  - id: "17"
+    skill: explain-diff-html
+    label: explain-diff-html
+    prompt: prompts/17-explain-diff.md
+    writes:
+      html: "runs/${run_id}/explain_diff_${feature}_${n}${v}.html"
+
+  - id: "18"
+    label: run log
+    actor: orchestrator
+    action: run_log
+
+  # git push --set-upstream origin ${branch}, by the orchestrator: no skill and no chat pushes.
+  # A failed push fails the run; `agenthub-harness resume` retries this step.
+  - id: "18b"
+    label: push
+    actor: orchestrator
+    action: push_branch
+    skip_when: defaults.push
+
+  - id: "19"
+    label: GATE 2
+    gate: human
+    actor: human
+    message: "Read final_report_${feature}_${n}.md, regression_${feature}_${n}.csv and explain_diff_${feature}_${n}.html. Step 18b pushed the branch ${branch} to origin (unless the run was started with push=never); open the PR yourself. Say you are done to close the run."
+    chat_skill: final-report
+    chat_prompt: prompts/19-gate2-chat.md

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Apply Reviews"
+  short_description: "Apply review findings above a threshold."
+  default_prompt: "Use $apply-reviews with these reports and thresholds."

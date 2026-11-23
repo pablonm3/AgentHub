@@ -1,0 +1,4 @@
+interface:
+  display_name: "Build Plan"
+  short_description: "Implement the latest plan, one commit."
+  default_prompt: "Use $build-plan to implement this plan file."

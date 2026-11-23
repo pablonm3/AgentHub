@@ -1,0 +1,34 @@
+# regression-v1 tunables (docs/WORKFLOW_SPEC.md 5.4 and 10).
+# Override per run: agenthub-harness run regression-v1 <feature> --set regression_workers=6
+# The ticket's `repetitions` and `workers` win over the two regression values below when present.
+# The effective values are copied into runs/<run-id>/state.json.
+
+max_iterations: 1                       # no build loop in this workflow; shown as "iteration 1/1"
+regression_repetitions: 3               # repetitions per eval case on each side, when the ticket gives none
+regression_workers: 4                   # concurrent eval cases per side (the eval runner's concurrency), when the ticket gives none
+
+auth: account                           # account (logged-in Claude Code credential) | api_key (ANTHROPIC_API_KEY)
+on_question: pause                      # pause (record the question in a decision file and stop; AgentHub surfaces it) | chat (terminal chat); only a failed setup command asks anything in this workflow
+on_rate_limit: wait                     # wait (sleep until the usage limit resets, then continue the step in its session) | pause (end the run; `agenthub-harness resume` continues it)
+step_continuations: 3                   # times one step execution may be continued in its own session after it stopped unfinished; 0 = always start the step over
+
+permission_mode: bypassPermissions      # claude -p permission mode for autonomous steps; the write boundary is enforced separately
+chat_permission_mode: auto              # the setup-failure chat
+
+model:                                  # Claude model per step (alias or full id, passed to `claude --model`)
+  default: opus                         # 15b, 15c, 16 and the setup-failure chat
+  steps: {}                             # per-step override by step id, e.g. "15c": sonnet
+                                        # per run: --set model=sonnet (every step), or
+                                        # --set 'model={default: opus, steps: {"15c": haiku}}' (restate the default)
+
+effort:                                 # reasoning effort per step: low | medium | high | xhigh | max. Set as CLAUDE_CODE_EFFORT_LEVEL for the
+                                        # step's process, so it also holds for its subagents and wins over your own Claude Code settings;
+                                        # without this block a step runs at the level those settings give its model
+  default: medium                       # 15b, 15c and 16; the setup-failure chat keeps your own setting
+  steps: {}                             # per-step override by step id, e.g. "15b": high
+
+timeouts:                               # minutes per step; a step past its timeout fails the run
+  default: 60
+  "15b": 300                            # both sides of the eval comparison; all ~366 dev cases × 3 repetitions at 4 workers is ~2.5 h
+
+max_budget_usd: null                    # --max-budget-usd per step when auth is api_key; null = no cap

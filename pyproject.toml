@@ -1,0 +1,32 @@
+[project]
+name = "agenthub"
+version = "0.1.0"
+description = "AgentHub: a board where tickets and tasks start Claude sessions for AI users, with its own copy of the coding harness"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "pyyaml>=6.0",
+    "markdown>=3.5",
+    "nbconvert>=7.0",
+]
+
+[project.scripts]
+agenthub = "agenthub.cli:main"
+agenthub-harness = "harness.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["agenthub*", "harness*"]
+
+[tool.setuptools.package-data]
+agenthub = ["schema.sql", "prompts/*.md", "prompts/*/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["harness/tests", "agenthub/tests"]

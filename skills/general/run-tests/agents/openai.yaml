@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run Tests"
+  short_description: "Execute ephemeral test cases, report only."
+  default_prompt: "Use $run-tests on this testing file."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Plan"
+  short_description: "Long and short implementation plans from a spec."
+  default_prompt: "Use $plan to plan the implementation of this spec."

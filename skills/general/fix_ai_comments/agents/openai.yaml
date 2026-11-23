@@ -1,0 +1,4 @@
+interface:
+  display_name: "fix_ai_comments"
+  short_description: "Clean up AI-style comments in selected Git changes"
+  default_prompt: "Use $fix_ai_comments to clean up new or changed comments; ask me to choose a baseline branch or uncommitted changes if I have not specified the scope."

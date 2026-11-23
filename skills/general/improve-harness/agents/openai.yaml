@@ -1,0 +1,4 @@
+interface:
+  display_name: "Improve Harness"
+  short_description: "Review recent runs, propose harness changes."
+  default_prompt: "Use $improve-harness for the runs since the last review."

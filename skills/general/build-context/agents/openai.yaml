@@ -1,0 +1,4 @@
+interface:
+  display_name: "Build Context"
+  short_description: "Read-only ticket investigation and reproduction."
+  default_prompt: "Use $build-context to build the context file for this ticket."

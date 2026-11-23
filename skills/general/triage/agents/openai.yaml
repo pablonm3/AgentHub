@@ -1,0 +1,4 @@
+interface:
+  display_name: "Triage"
+  short_description: "Decide done, new plan or spec issue."
+  default_prompt: "Use $triage on this run's artifacts."

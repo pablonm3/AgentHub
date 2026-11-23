@@ -1,0 +1,53 @@
+# feature-v1 tunables (docs/WORKFLOW_SPEC.md 5.4). Override per run: agenthub-harness run feature-v1 <feature> --set max_iterations=5
+# Override for every run of one project: `defaults:` under the project in harness.yaml (`--set` still wins).
+# The effective values are copied into runs/<run-id>/state.json.
+
+max_iterations: 3                       # build-loop cap; reaching it opens the same chat as spec_issue (section 7, Q1)
+spec: always                            # always | auto | never  (no `auto` threshold is defined yet)
+review_severity_threshold: high         # apply-reviews applies code-review items at this severity and above
+readability_severity_threshold: medium  # ... and readability items at this severity and above
+review_scope: incremental               # incremental | full — on build-loop repeats, code-review covers only the commits since its last finished review
+review_incremental_max_lines: 400       # ... unless more lines than this changed since that review (added + deleted)
+review_incremental_max_share: 0.25      # ... or more than this share of the whole branch diff; a new spec version always gets a full review
+test_subset_on_retry: full              # smoke | full — which test cases run-tests runs on iterations 2+
+regression: always                      # always | never — step 15b compares base commit vs branch head on the eval suites the run touched
+regression_repetitions: 3               # repetitions per eval case on each side in step 15b
+langsmith_cleanup: always               # always | never — step 15c deletes the run's scratch eval datasets in LangSmith
+push: always                            # always | never — step 18b pushes the feature branch to origin before GATE 2
+
+auth: account                           # account (logged-in Claude Code credential) | api_key (ANTHROPIC_API_KEY)
+on_question: pause                      # pause (record the question in a decision file and stop; AgentHub surfaces it) | chat (open a terminal chat)
+on_rate_limit: wait                     # wait (sleep until the usage limit resets, then continue the step in its session) | pause (end the run; `agenthub-harness resume` continues it)
+step_continuations: 3                   # times one step execution may be continued in its own session after it stopped unfinished; 0 = always start the step over
+
+permission_mode: bypassPermissions      # claude -p permission mode for autonomous steps; the write boundary is enforced separately
+chat_permission_mode: auto              # interactive chats (gates, questions); auto = no prompt per edit or command
+
+model:                                  # Claude model per step (alias or full id, passed to `claude --model`)
+  default: opus                         # every step and the gate/question chats
+  steps:
+    "4": fable                          # build-context
+    "5": fable                          # spec
+    "6": fable                          # plan
+    "8": fable                          # testcase-builder
+
+effort:                                 # reasoning effort per step: low | medium | high | xhigh | max. Set as CLAUDE_CODE_EFFORT_LEVEL for the
+                                        # step's process, so it also holds for its subagents and wins over your own Claude Code settings;
+                                        # without this block a step runs at the level those settings give its model
+  default: medium                       # every step not listed below; gate and question chats keep your own setting
+  steps:
+    "4": high                           # build-context
+    "5": high                           # spec
+    "6": xhigh                          # plan
+    "8": high                           # testcase-builder
+    "9": xhigh                          # build-plan
+    "10": high                          # code-review
+    "14": high                          # triage
+
+timeouts:                               # minutes per step; a step past its timeout fails the run
+  default: 90
+  "13": 150
+  "13b": 150
+  "15b": 150
+
+max_budget_usd: null                    # --max-budget-usd per step when auth is api_key; null = no cap

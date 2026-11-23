@@ -1,0 +1,4 @@
+interface:
+  display_name: "Code Review"
+  short_description: "Multi-agent review of branch diffs by severity."
+  default_prompt: "Use $code-review to review my current HEAD against another branch."
