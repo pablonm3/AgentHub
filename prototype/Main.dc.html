@@ -1,0 +1,1122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Workbench board and tasks</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@600;700&display=swap">
+<style>
+body { margin: 0 }
+* { box-sizing: border-box }
+button, input, textarea { font: inherit; color: inherit }
+button { cursor: pointer }
+a { color: #1E3FB8 } a:hover { color: #142C85 }
+:focus-visible { outline: 2px solid #2F5BEA; outline-offset: 2px }
+.wb-dark :focus-visible { outline-color: #8FB0FF }
+.wb-card:hover, .wb-row:hover { box-shadow: 0 2px 10px rgba(22, 26, 34, 0.12) }
+.wb-ghost:hover { box-shadow: inset 0 0 0 999px rgba(22, 26, 34, 0.06) }
+.wb-ghost-dark:hover { box-shadow: inset 0 0 0 999px rgba(255, 255, 255, 0.08) }
+.wb-term-input::placeholder { color: #8B94A7 }
+@keyframes wb-pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.35 } }
+@keyframes wb-blink { 0%, 49% { opacity: 1 } 50%, 100% { opacity: 0 } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important } }
+</style>
+</helmet>
+<div style="min-height: 100vh; display: flex; flex-direction: column; background: #F3F4F7; color: #161A22; font-family: Inter, system-ui, sans-serif; font-size: 14px; line-height: 20px">
+
+<header style="display: flex; flex-wrap: wrap; align-items: center; gap: 0 28px; padding: 0 24px; background: #FFFFFF; border-bottom: 1px solid #D9DDE5">
+<div style="display: flex; align-items: center; gap: 10px; padding: 14px 0">
+<span aria-hidden="true" style="width: 28px; height: 28px; border-radius: 8px; background: {{ accent }}; display: grid; place-items: center">
+<svg width="16" height="16" viewBox="0 0 16 16" fill="#FFFFFF" aria-hidden="true"><rect x="2" y="2.5" width="3" height="11" rx="1"></rect><rect x="6.5" y="2.5" width="3" height="7" rx="1"></rect><rect x="11" y="2.5" width="3" height="9" rx="1"></rect></svg>
+</span>
+<span style="font-family: 'Space Grotesk', sans-serif; font-size: 18px; line-height: 24px; font-weight: 700; letter-spacing: -0.01em">Workbench</span>
+</div>
+<nav aria-label="Views" style="display: flex; align-self: stretch; gap: 4px">
+<button type="button" class="wb-ghost" onClick="{{ showBoard }}" aria-current="{{ boardTab.current }}" style="display: inline-flex; align-items: center; gap: 8px; min-height: 56px; padding: 0 14px; background: transparent; border-style: solid; border-color: {{ boardTab.line }}; border-width: 0 0 3px 0; color: {{ boardTab.color }}; font-size: 14px; font-weight: 600">
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2.5" width="3" height="11" rx="1"></rect><rect x="6.5" y="2.5" width="3" height="7" rx="1"></rect><rect x="11" y="2.5" width="3" height="9" rx="1"></rect></svg>
+Board
+</button>
+<button type="button" class="wb-ghost" onClick="{{ showTasks }}" aria-current="{{ tasksTab.current }}" style="display: inline-flex; align-items: center; gap: 8px; min-height: 56px; padding: 0 14px; background: transparent; border-style: solid; border-color: {{ tasksTab.line }}; border-width: 0 0 3px 0; color: {{ tasksTab.color }}; font-size: 14px; font-weight: 600">
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="2"></rect><path d="M4.5 6.5l2 1.75-2 1.75"></path><path d="M8.5 10.5h3"></path></svg>
+Tasks
+<sc-if value="{{ hasWaiting }}" hint-placeholder-val="{{ false }}">
+<span title="Tasks waiting on you" style="min-width: 22px; padding: 2px 7px; border-radius: 999px; background: #FFE9CC; color: #8A4500; font-size: 12px; line-height: 16px; font-weight: 600; text-align: center">{{ waitingCount }}</span>
+</sc-if>
+</button>
+</nav>
+<div style="margin-left: auto; display: flex; align-items: center; padding: 12px 0 12px 8px">
+<sc-for list="{{ team }}" as="m" hint-placeholder-count="6">
+<span title="{{ m.name }}" style="width: 32px; height: 32px; margin-left: -8px; border-radius: 50%; border: 2px solid #FFFFFF; background: {{ m.color }}; color: #FFFFFF; font-size: 11px; line-height: 14px; font-weight: 600; display: grid; place-items: center">{{ m.initials }}</span>
+</sc-for>
+</div>
+</header>
+
+<sc-if value="{{ isBoard }}" hint-placeholder-val="{{ true }}">
+<main style="display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0">
+<div style="display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 8px 24px; padding: 24px 24px 16px">
+<div style="display: flex; flex-direction: column; gap: 4px">
+<h1 style="margin: 0; font-family: 'Space Grotesk', sans-serif; font-size: 26px; line-height: 32px; font-weight: 700; letter-spacing: -0.02em">Payments API</h1>
+<p style="margin: 0; color: #5A6272">{{ boardSummary }}</p>
+</div>
+<p style="margin: 0; color: #5A6272; font-size: 13px">Drag a card to another stage, or open it to move, assign and comment.</p>
+</div>
+<div style="display: flex; align-items: flex-start; gap: 14px; padding: 0 24px 32px; overflow-x: auto">
+<sc-for list="{{ columns }}" as="col" hint-placeholder-count="5">
+<section aria-label="{{ col.name }}" onDragOver="{{ col.onDragOver }}" onDrop="{{ col.onDrop }}" style="flex: 1 0 256px; max-width: 380px; display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: 12px; background: #E7EAEF; box-shadow: inset 0 0 0 2px {{ col.ring }}">
+<div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 4px">
+<h2 style="margin: 0; font-family: 'Space Grotesk', sans-serif; font-size: 15px; line-height: 20px; font-weight: 600">{{ col.name }}</h2>
+<span style="min-width: 26px; padding: 2px 8px; border-radius: 999px; background: #FFFFFF; color: #3A414E; font-size: 12px; line-height: 16px; font-weight: 600; text-align: center">{{ col.count }}</span>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<sc-for list="{{ col.cards }}" as="card" hint-placeholder-count="2">
+<div class="wb-card" draggable="true" onDragStart="{{ card.onDragStart }}" onDragEnd="{{ card.onDragEnd }}" onDragOver="{{ card.onDragOver }}" onDrop="{{ card.onDrop }}" style="display: flex; flex-direction: column; gap: 6px; padding: 12px; background: #FFFFFF; border: 1px solid #D9DDE5; border-radius: 10px; cursor: grab; opacity: {{ card.opacity }}">
+<sc-if value="{{ card.hasLabels }}" hint-placeholder-val="{{ true }}">
+<div style="display: flex; flex-wrap: wrap; gap: 6px">
+<sc-for list="{{ card.labels }}" as="label" hint-placeholder-count="1">
+<span style="padding: 2px 8px; border-radius: 6px; background: #EEF0F4; color: #3A414E; font-size: 11px; line-height: 16px; font-weight: 600">{{ label.text }}</span>
+</sc-for>
+</div>
+</sc-if>
+<button type="button" onClick="{{ card.open }}" style="display: flex; align-items: center; width: 100%; min-height: 44px; padding: 2px 0; border: 0; background: transparent; color: #161A22; font-size: 14px; line-height: 20px; font-weight: 600; text-align: left">{{ card.title }}</button>
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px">
+<span style="font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace; font-size: 12px; line-height: 16px; color: #5A6272">{{ card.id }}</span>
+<sc-if value="{{ card.hasComments }}" hint-placeholder-val="{{ true }}">
+<span title="Comments" style="display: inline-flex; align-items: center; gap: 4px; color: #5A6272; font-size: 12px; line-height: 16px">
+<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3.5h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H7.5L4.5 14v-2.5H3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z"></path></svg>
+{{ card.commentCount }}
+</span>
+</sc-if>
+<sc-if value="{{ card.hasAgent }}" hint-placeholder-val="{{ false }}">
+<span style="display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 999px; background: {{ card.agentBg }}; color: {{ card.agentFg }}; font-size: 11px; line-height: 16px; font-weight: 600; white-space: nowrap">
+<span aria-hidden="true" style="width: 6px; height: 6px; border-radius: 50%; background: {{ card.agentDot }}; animation: {{ card.agentAnim }}"></span>
+{{ card.agentLabel }}
+</span>
+</sc-if>
+<div style="display: flex; margin-left: auto; padding-left: 6px">
+<sc-for list="{{ card.people }}" as="person" hint-placeholder-count="1">
+<span title="{{ person.name }}" style="width: 26px; height: 26px; margin-left: -6px; border-radius: 50%; border: 2px solid #FFFFFF; background: {{ person.color }}; color: #FFFFFF; font-size: 10px; line-height: 12px; font-weight: 600; display: grid; place-items: center">{{ person.initials }}</span>
+</sc-for>
+</div>
+</div>
+</div>
+</sc-for>
+</div>
+<sc-if value="{{ col.isEmpty }}" hint-placeholder-val="{{ false }}">
+<p style="margin: 0; padding: 18px 12px; border: 1px dashed #8A93A6; border-radius: 10px; color: #5A6272; font-size: 13px; text-align: center">No cards here. Drop one in or add a card.</p>
+</sc-if>
+<sc-if value="{{ col.notAdding }}" hint-placeholder-val="{{ true }}">
+<button type="button" class="wb-ghost" onClick="{{ col.startAdd }}" style="display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; padding: 0 10px; border: 0; border-radius: 9px; background: transparent; color: #3A414E; font-size: 13px; font-weight: 600; text-align: left">
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"></path></svg>
+Add a card
+</button>
+</sc-if>
+<sc-if value="{{ col.adding }}" hint-placeholder-val="{{ false }}">
+<div data-wb-form="add" style="display: flex; flex-direction: column; gap: 8px">
+<input type="text" aria-label="Card title" placeholder="Card title" autoFocus="{{ true }}" autoComplete="off" onKeyDown="{{ col.onAddKey }}" style="width: 100%; height: 44px; padding: 0 12px; border: 1px solid #8A93A6; border-radius: 9px; background: #FFFFFF; color: #161A22; font-size: 14px">
+<div style="display: flex; gap: 8px">
+<button type="button" onClick="{{ col.onAddClick }}" style="min-height: 44px; padding: 0 16px; border: 0; border-radius: 9px; background: {{ col.accent }}; color: #FFFFFF; font-size: 13px; font-weight: 600">Add card</button>
+<button type="button" class="wb-ghost" onClick="{{ col.cancelAdd }}" style="min-height: 44px; padding: 0 14px; border: 0; border-radius: 9px; background: transparent; color: #3A414E; font-size: 13px; font-weight: 600">Cancel</button>
+</div>
+</div>
+</sc-if>
+</section>
+</sc-for>
+</div>
+</main>
+</sc-if>
+
+<sc-if value="{{ isTasks }}" hint-placeholder-val="{{ false }}">
+<main style="display: flex; flex-direction: column; gap: 18px; width: 100%; max-width: 1160px; margin: 0 auto; padding: 24px 24px 40px">
+<div style="display: flex; flex-direction: column; gap: 4px">
+<h1 style="margin: 0; font-family: 'Space Grotesk', sans-serif; font-size: 26px; line-height: 32px; font-weight: 700; letter-spacing: -0.02em">Tasks</h1>
+<p style="margin: 0; color: #5A6272">Each task is an AI agent working on a card. Open one to watch its terminal and send it commands.</p>
+</div>
+<div style="display: flex; flex-wrap: wrap; gap: 8px">
+<sc-for list="{{ filters }}" as="f" hint-placeholder-count="4">
+<button type="button" class="wb-ghost" onClick="{{ f.pick }}" aria-pressed="{{ f.on }}" style="display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px; border: 1px solid {{ f.border }}; border-radius: 999px; background: {{ f.bg }}; color: {{ f.fg }}; font-size: 13px; font-weight: 600">{{ f.label }}<span style="min-width: 22px; padding: 1px 7px; border-radius: 999px; background: {{ f.countBg }}; color: {{ f.countFg }}; font-size: 12px; line-height: 16px; text-align: center">{{ f.count }}</span></button>
+</sc-for>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<sc-for list="{{ taskRows }}" as="task" hint-placeholder-count="5">
+<button type="button" class="wb-row" onClick="{{ task.open }}" style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; width: 100%; min-height: 64px; padding: 12px 16px; background: #FFFFFF; border: 1px solid #D9DDE5; border-radius: 12px; color: #161A22; text-align: left">
+<span style="flex: 0 0 158px; display: flex">
+<span style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: {{ task.pillBg }}; color: {{ task.pillFg }}; font-size: 12px; line-height: 16px; font-weight: 600; white-space: nowrap">
+<span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 50%; background: {{ task.dot }}; animation: {{ task.dotAnim }}"></span>
+{{ task.statusLabel }}
+</span>
+</span>
+<span style="flex: 2 1 260px; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+<span style="font-size: 15px; line-height: 20px; font-weight: 600">{{ task.name }}</span>
+<span style="font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace; font-size: 12px; line-height: 16px; color: #5A6272">{{ task.sub }}</span>
+</span>
+<span style="flex: 3 1 280px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace; font-size: 12px; line-height: 16px; color: #3A414E">{{ task.last }}</span>
+<span style="flex: 0 0 132px; color: #5A6272; font-size: 13px">{{ task.started }}</span>
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#5A6272" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5l4.5 4.5L6 12.5"></path></svg>
+</button>
+</sc-for>
+</div>
+<sc-if value="{{ noTasks }}" hint-placeholder-val="{{ false }}">
+<p style="margin: 0; padding: 28px 16px; border: 1px dashed #8A93A6; border-radius: 12px; color: #5A6272; text-align: center">No tasks with this status right now.</p>
+</sc-if>
+</main>
+</sc-if>
+
+<sc-if value="{{ hasCardModal }}" hint-placeholder-val="{{ false }}">
+<div style="position: fixed; inset: 0; z-index: 40; display: flex; align-items: flex-start; justify-content: center; padding: 32px 16px; overflow-y: auto">
+<button type="button" aria-label="Close card" onClick="{{ closeCard }}" style="position: fixed; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: rgba(15, 18, 24, 0.55); cursor: default"></button>
+<div role="dialog" aria-modal="true" aria-label="{{ cm.title }}" onKeyDown="{{ onCardKey }}" style="position: relative; width: 100%; max-width: 880px; display: flex; flex-direction: column; background: #FFFFFF; border-radius: 14px; box-shadow: 0 24px 64px rgba(15, 18, 24, 0.28)">
+<div style="display: flex; align-items: center; gap: 10px; padding: 10px 10px 0 24px">
+<span style="font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace; font-size: 12px; line-height: 16px; font-weight: 500; padding: 3px 8px; border-radius: 6px; background: #EEF0F4; color: #3A414E">{{ cm.id }}</span>
+<span style="color: #5A6272; font-size: 13px">{{ cm.stageName }}</span>
+<button type="button" class="wb-ghost" aria-label="Close card" onClick="{{ closeCard }}" style="margin-left: auto; width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 9px; background: transparent; color: #3A414E">
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"></path></svg>
+</button>
+</div>
+<h2 style="margin: 2px 24px 0; font-family: 'Space Grotesk', sans-serif; font-size: 23px; line-height: 30px; font-weight: 700; letter-spacing: -0.01em">{{ cm.title }}</h2>
+<div style="display: flex; flex-wrap: wrap; gap: 24px 32px; padding: 20px 24px 24px">
+
+<div style="flex: 999 1 380px; min-width: 0; display: flex; flex-direction: column; gap: 22px">
+<section style="display: flex; flex-direction: column; gap: 8px">
+<h3 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #5A6272">Description</h3>
+<p style="margin: 0; font-size: 15px; line-height: 23px">{{ cm.desc }}</p>
+</section>
+<section style="display: flex; flex-direction: column; gap: 14px">
+<h3 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #5A6272">{{ cm.commentHeading }}</h3>
+<sc-if value="{{ cm.noComments }}" hint-placeholder-val="{{ false }}">
+<p style="margin: 0; color: #5A6272">No comments yet. Start the thread below.</p>
+</sc-if>
+<sc-for list="{{ cm.comments }}" as="c" hint-placeholder-count="2">
+<div style="display: flex; gap: 10px">
+<span aria-hidden="true" style="flex: 0 0 30px; width: 30px; height: 30px; border-radius: 50%; background: {{ c.color }}; color: #FFFFFF; font-size: 11px; line-height: 14px; font-weight: 600; display: grid; place-items: center">{{ c.initials }}</span>
+<div style="flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+<div style="display: flex; align-items: baseline; gap: 8px"><span style="font-weight: 600">{{ c.author }}</span><span style="color: #5A6272; font-size: 12px">{{ c.when }}</span></div>
+<p style="margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 22px"><sc-for list="{{ c.parts }}" as="part" hint-placeholder-count="1"><span style="color: {{ part.color }}; background: {{ part.bg }}; font-weight: {{ part.weight }}; padding: {{ part.pad }}; border-radius: 5px">{{ part.text }}</span></sc-for></p>
+</div>
+</div>
+</sc-for>
+<div data-wb-form="comment" style="display: flex; flex-direction: column; gap: 8px; padding-top: 4px">
+<label for="wb-comment" style="font-size: 13px; font-weight: 600">Add a comment</label>
+<textarea id="wb-comment" rows="3" placeholder="Write a comment. Type @ to tag someone." onChange="{{ onDraft }}" onKeyDown="{{ onCommentKey }}" style="width: 100%; min-height: 88px; padding: 10px 12px; border: 1px solid #8A93A6; border-radius: 10px; background: #FFFFFF; color: #161A22; font-size: 14px; line-height: 20px; resize: vertical"></textarea>
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px">
+<span style="margin-right: 2px; color: #5A6272; font-size: 13px">Tag someone</span>
+<sc-for list="{{ cm.people }}" as="p" hint-placeholder-count="5">
+<button type="button" class="wb-ghost" onClick="{{ p.pick }}" style="display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px 0 8px; border: 1px solid #D9DDE5; border-radius: 999px; background: #FFFFFF; color: #161A22; font-size: 13px; font-weight: 500"><span aria-hidden="true" style="width: 24px; height: 24px; border-radius: 50%; background: {{ p.color }}; color: #FFFFFF; font-size: 10px; line-height: 12px; font-weight: 600; display: grid; place-items: center">{{ p.initials }}</span>{{ p.at }}</button>
+</sc-for>
+<button type="button" onClick="{{ postComment }}" style="margin-left: auto; min-height: 44px; padding: 0 18px; border: 0; border-radius: 9px; background: {{ cm.accent }}; color: #FFFFFF; font-size: 14px; font-weight: 600">Comment</button>
+</div>
+</div>
+</section>
+</div>
+
+<aside style="flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: 22px">
+<section style="display: flex; flex-direction: column; gap: 8px">
+<h3 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #5A6272">Stage</h3>
+<div style="display: flex; flex-wrap: wrap; gap: 6px">
+<sc-for list="{{ cm.stages }}" as="st" hint-placeholder-count="5">
+<button type="button" class="wb-ghost" onClick="{{ st.pick }}" aria-pressed="{{ st.on }}" style="min-height: 44px; padding: 0 14px; border: 1px solid {{ st.border }}; border-radius: 999px; background: {{ st.bg }}; color: {{ st.fg }}; font-size: 13px; font-weight: 600">{{ st.name }}</button>
+</sc-for>
+</div>
+</section>
+<section style="display: flex; flex-direction: column; gap: 8px">
+<h3 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #5A6272">Assigned to</h3>
+<div style="display: flex; flex-wrap: wrap; gap: 6px">
+<sc-for list="{{ cm.assignees }}" as="u" hint-placeholder-count="6">
+<button type="button" class="wb-ghost" onClick="{{ u.toggle }}" aria-pressed="{{ u.on }}" style="display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px 0 8px; border: 1px solid {{ u.border }}; border-radius: 999px; background: {{ u.bg }}; color: {{ u.fg }}; font-size: 13px; font-weight: {{ u.weight }}"><span aria-hidden="true" style="width: 24px; height: 24px; border-radius: 50%; background: {{ u.color }}; color: #FFFFFF; font-size: 10px; line-height: 12px; font-weight: 600; display: grid; place-items: center">{{ u.initials }}</span>{{ u.first }}<span aria-hidden="true" style="display: {{ u.check }}; align-items: center"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"></path></svg></span></button>
+</sc-for>
+</div>
+</section>
+<sc-if value="{{ cm.hasLabels }}" hint-placeholder-val="{{ true }}">
+<section style="display: flex; flex-direction: column; gap: 8px">
+<h3 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #5A6272">Labels</h3>
+<div style="display: flex; flex-wrap: wrap; gap: 6px">
+<sc-for list="{{ cm.labels }}" as="label" hint-placeholder-count="2">
+<span style="padding: 3px 9px; border-radius: 6px; background: #EEF0F4; color: #3A414E; font-size: 12px; line-height: 16px; font-weight: 600">{{ label.text }}</span>
+</sc-for>
+</div>
+</section>
+</sc-if>
+<section style="display: flex; flex-direction: column; gap: 10px">
+<h3 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #5A6272">Agent run</h3>
+<sc-if value="{{ cm.hasAgent }}" hint-placeholder-val="{{ false }}">
+<div style="display: flex; flex-direction: column; align-items: flex-start; gap: 10px">
+<span style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: {{ cm.pillBg }}; color: {{ cm.pillFg }}; font-size: 12px; line-height: 16px; font-weight: 600; white-space: nowrap">
+<span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 50%; background: {{ cm.dot }}; animation: {{ cm.dotAnim }}"></span>
+{{ cm.statusLabel }}
+</span>
+<span style="font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace; font-size: 12px; line-height: 18px; color: #5A6272; overflow-wrap: anywhere">{{ cm.agentSub }}</span>
+<button type="button" onClick="{{ cm.openTerminal }}" style="display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px; border: 0; border-radius: 9px; background: #161A22; color: #FFFFFF; font-size: 13px; font-weight: 600">
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="2"></rect><path d="M4.5 6.5l2 1.75-2 1.75"></path><path d="M8.5 10.5h3"></path></svg>
+Open terminal
+</button>
+</div>
+</sc-if>
+<sc-if value="{{ cm.noAgent }}" hint-placeholder-val="{{ true }}">
+<div style="display: flex; flex-direction: column; align-items: flex-start; gap: 10px">
+<p style="margin: 0; color: #5A6272">No agent is working on this card.</p>
+<button type="button" class="wb-ghost" onClick="{{ cm.startAgent }}" style="display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px; border: 1px solid #8A93A6; border-radius: 9px; background: #FFFFFF; color: #161A22; font-size: 13px; font-weight: 600">
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3.5l7 4.5-7 4.5z"></path></svg>
+Start an agent
+</button>
+</div>
+</sc-if>
+</section>
+</aside>
+
+</div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ hasTaskModal }}" hint-placeholder-val="{{ false }}">
+<div style="position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-start; justify-content: center; padding: 32px 16px; overflow-y: auto">
+<button type="button" aria-label="Close terminal" onClick="{{ closeTask }}" style="position: fixed; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: rgba(15, 18, 24, 0.6); cursor: default"></button>
+<div class="wb-dark" role="dialog" aria-modal="true" aria-label="{{ tm.name }}" onKeyDown="{{ onTaskKey }}" style="position: relative; width: 100%; max-width: 1000px; display: flex; flex-direction: column; overflow: hidden; background: #0F1218; color: #D5DAE3; border-radius: 14px; box-shadow: 0 24px 64px rgba(15, 18, 24, 0.45)">
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 12px 12px 20px; background: #171C26; border-bottom: 1px solid #2A3140">
+<div style="flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 6px">
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px">
+<span style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: {{ tm.pillBg }}; color: {{ tm.pillFg }}; font-size: 12px; line-height: 16px; font-weight: 600; white-space: nowrap">
+<span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 50%; background: {{ tm.dot }}; animation: {{ tm.dotAnim }}"></span>
+{{ tm.statusLabel }}
+</span>
+<span style="font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace; font-size: 12px; line-height: 16px; color: #A3ACBD; overflow-wrap: anywhere">{{ tm.sub }}</span>
+</div>
+<h2 style="margin: 0; color: #FFFFFF; font-family: 'Space Grotesk', sans-serif; font-size: 19px; line-height: 26px; font-weight: 600">{{ tm.name }}</h2>
+</div>
+<sc-if value="{{ tm.hasCard }}" hint-placeholder-val="{{ true }}">
+<button type="button" class="wb-ghost-dark" onClick="{{ tm.viewCard }}" style="min-height: 44px; padding: 0 14px; border: 1px solid #4A556B; border-radius: 9px; background: transparent; color: #E6E9EF; font-size: 13px; font-weight: 600">View card</button>
+</sc-if>
+<button type="button" class="wb-ghost-dark" aria-label="Close terminal" onClick="{{ closeTask }}" style="width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 9px; background: transparent; color: #E6E9EF">
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"></path></svg>
+</button>
+</div>
+<div style="height: 54vh; min-height: 260px; display: flex; flex-direction: column-reverse; overflow-y: auto; padding: 16px 20px; font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace; font-size: 13px; line-height: 21px">
+<div style="display: flex; flex-direction: column">
+<sc-for list="{{ tm.lines }}" as="line" hint-placeholder-count="6"><div style="color: {{ line.color }}; white-space: pre-wrap; overflow-wrap: anywhere">{{ line.text }}</div></sc-for>
+<div style="color: {{ tm.hintColor }}; white-space: pre-wrap"><span aria-hidden="true" style="animation: {{ tm.cursorAnim }}">▍</span> {{ tm.hint }}</div>
+</div>
+</div>
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 20px 4px; background: #131822; border-top: 1px solid #2A3140">
+<span style="margin-right: 4px; color: #A3ACBD; font-size: 12px">Quick commands</span>
+<sc-for list="{{ tm.quick }}" as="q" hint-placeholder-count="4">
+<button type="button" class="wb-ghost-dark" onClick="{{ q.run }}" style="min-height: 44px; padding: 0 14px; border: 1px solid #4A556B; border-radius: 9px; background: transparent; color: #E6E9EF; font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace; font-size: 12px">{{ q.label }}</button>
+</sc-for>
+</div>
+<div data-wb-form="term" style="display: flex; align-items: center; gap: 10px; padding: 8px 12px 12px 20px; background: #131822">
+<span aria-hidden="true" style="color: #8FB0FF; font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace; font-size: 14px; font-weight: 700">❯</span>
+<input type="text" class="wb-term-input" aria-label="Command for the agent" placeholder="Type a command or a message for the agent, then press Enter. Try: help" autoFocus="{{ true }}" autoComplete="off" spellCheck="{{ false }}" onKeyDown="{{ tm.onKey }}" style="flex: 1 1 auto; min-width: 0; height: 44px; padding: 0 4px; border: 0; border-radius: 6px; background: transparent; color: #F2F4F8; font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace; font-size: 13px">
+<button type="button" onClick="{{ tm.onSend }}" style="min-height: 44px; padding: 0 18px; border: 0; border-radius: 9px; background: {{ tm.accent }}; color: #FFFFFF; font-size: 13px; font-weight: 600">Send</button>
+</div>
+</div>
+</div>
+</sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#2F5BEA","options":["#2F5BEA","#0E7C86","#7A3FB5","#161A22"]},"speed":{"editor":"enum","default":"normal","options":["slow","normal","fast"]},"$preview":{"width":1440,"height":960}}'>
+class Component extends DCLogic {
+
+  users() {
+    return [
+      { id: 'you', name: 'You', first: 'You', handle: 'you', initials: 'YO', color: '#161A22' },
+      { id: 'maya', name: 'Maya Chen', first: 'Maya', handle: 'Maya', initials: 'MC', color: '#3D4EE0' },
+      { id: 'diego', name: 'Diego Ruiz', first: 'Diego', handle: 'Diego', initials: 'DR', color: '#0E7C86' },
+      { id: 'aiko', name: 'Aiko Tanaka', first: 'Aiko', handle: 'Aiko', initials: 'AT', color: '#B4531A' },
+      { id: 'sam', name: 'Sam Okafor', first: 'Sam', handle: 'Sam', initials: 'SO', color: '#7A3FB5' },
+      { id: 'lena', name: 'Lena Fischer', first: 'Lena', handle: 'Lena', initials: 'LF', color: '#36506B' }
+    ];
+  }
+
+  stages() {
+    return [
+      { id: 'backlog', name: 'Backlog' },
+      { id: 'todo', name: 'To do' },
+      { id: 'doing', name: 'In progress' },
+      { id: 'review', name: 'In review' },
+      { id: 'done', name: 'Done' }
+    ];
+  }
+
+  statusMeta() {
+    return {
+      running: { label: 'Running', bg: '#E3EAFF', fg: '#1E3FB8', dot: '#2F5BEA' },
+      waiting: { label: 'Waiting on user', bg: '#FFE9CC', fg: '#8A4500', dot: '#C76A00' },
+      done: { label: 'Done', bg: '#E6E8EC', fg: '#3A414E', dot: '#5A6272' }
+    };
+  }
+
+  seed() {
+    if (this._seed) return this._seed;
+    const L = (k, text) => ({ k: k, text: text });
+    const C = (id, title, stage, labels, assignees, desc, comments) => ({
+      id: id, title: title, stage: stage, labels: labels, assignees: assignees, desc: desc, comments: comments
+    });
+    const M = (by, when, text) => ({ by: by, when: when, text: text });
+
+    const cards = [
+      C('PAY-113', 'Partial refunds in the refund flow', 'backlog', ['feature'], [],
+        'Support refunding part of an order. Needs an amount field and a guard so the total refunded never exceeds what was captured.', []),
+      C('PAY-114', 'Dark mode for the dashboard', 'backlog', ['frontend'], ['aiko'],
+        'Add a dark theme to the merchant dashboard and remember the choice per user.',
+        [M('aiko', '3 days ago', 'I have the token names drafted. @Lena can you check them against the brand palette?')]),
+      C('PAY-115', 'Slow query on the orders list', 'backlog', ['bug', 'performance'], ['diego'],
+        'The orders list is slow for merchants with a long order history. Probably a missing composite index.', []),
+      C('PAY-108', 'Idempotency keys for payment intents', 'todo', ['backend'], ['maya'],
+        'Accept an Idempotency-Key header on POST /payment_intents and return the stored response on a repeat.',
+        [M('maya', 'Yesterday', 'Scoping this to POST only for now. @Diego shout if the mobile client needs PATCH too.'),
+         M('diego', 'Yesterday', 'POST is enough for us.')]),
+      C('PAY-110', 'Alert on webhook failure rate', 'todo', ['ops'], ['sam'],
+        'Page whoever is on call when webhook deliveries start failing in bulk.', []),
+      C('PAY-104', 'Add retry logic to the webhook sender', 'doing', ['backend'], ['maya', 'you'],
+        'Retry failed deliveries with exponential backoff, up to 6 attempts, and record each attempt.',
+        [M('you', '2h ago', 'Started an agent on this. @Maya please review the backoff schedule when it lands.'),
+         M('maya', '1h ago', 'Will do. Cap the delay at 1 hour.')]),
+      C('PAY-102', 'Migrate invoices table to UUID keys', 'doing', ['database'], ['diego'],
+        'Replace the integer primary key on invoices with a UUID and update every foreign key that points at it.',
+        [M('diego', '4h ago', 'The agent must ask before it runs anything against staging. @Sam is on call if it goes sideways.')]),
+      C('PAY-106', 'Upgrade to Node 22', 'doing', ['chore'], ['sam'],
+        'Bump the runtime across all packages and fix whatever breaks.', []),
+      C('PAY-107', 'Fix flaky checkout test', 'doing', ['bug', 'tests'], ['aiko', 'you'],
+        'checkout.spec fails now and then on CI. Find the race and remove it.',
+        [M('aiko', '35 min ago', 'The agent is asking which fix we prefer. @you can you answer it in the Tasks tab?')]),
+      C('PAY-111', 'Audit log export as CSV', 'review', ['feature'], ['lena'],
+        'Let admins download the audit log for a date range as CSV.',
+        [M('lena', '20 min ago', 'Looks right on staging. Waiting for the agent to open the pull request.')]),
+      C('PAY-109', 'Rate-limit public endpoints', 'review', ['backend', 'security'], ['maya', 'sam'],
+        'Apply a per-key request limit to the public API and return 429 with Retry-After.',
+        [M('sam', '1h ago', '@Maya the limit should be per key, not per IP. Everything else looks good.')]),
+      C('PAY-112', 'Write onboarding docs for API keys', 'done', ['docs'], ['lena'],
+        'A short guide: create a key, scope it, rotate it.', []),
+      C('PAY-101', 'Set up the staging environment', 'done', ['ops'], ['sam', 'diego'],
+        'A staging stack that mirrors production, seeded with anonymised data.',
+        [M('diego', 'Last week', 'The seed job runs nightly now. Thanks @Sam.')])
+    ];
+
+    const T = (id, cardId, name, agent, branch, status, started, log, script) => ({
+      id: id, cardId: cardId, name: name, agent: agent, branch: branch, status: status, started: started,
+      paused: false, log: log, script: script,
+      full: log.concat(script).filter((l) => l.text.indexOf('Session ended') !== 0)
+    });
+
+    const pkgs = [['api', 86], ['worker', 34], ['webhooks', 21], ['billing', 42], ['admin', 31], ['dashboard', 58], ['sdk-js', 27], ['cli', 19], ['emails', 12], ['shared', 44]];
+    const node = [
+      L('dim', 'Session started · agent-09 · branch chore/pay-106-node-22'),
+      L('out', 'Reading ticket PAY-106: Upgrade to Node 22'),
+      L('out', 'Plan: bump one package at a time and run its tests before moving on.')
+    ];
+    pkgs.forEach((p) => {
+      node.push(L('out', '● Bump packages/' + p[0] + ' to Node 22'));
+      node.push(L('out', '● Run npm test -- ' + p[0]));
+      if (p[0] === 'billing') {
+        node.push(L('dim', '  41 passed, 1 failed'));
+        node.push(L('out', 'crypto.createCipher is gone in Node 22. Switching tokens.ts to createCipheriv.'));
+        node.push(L('out', '● Edit packages/billing/src/tokens.ts'));
+        node.push(L('dim', '  +12 −7'));
+        node.push(L('out', '● Run npm test -- billing'));
+      }
+      node.push(L('ok', p[1] + ' passed'));
+    });
+    node.push(L('ok', 'Committed "Upgrade runtime to Node 22" on chore/pay-106-node-22'));
+
+    const tasks = [
+      T('t1', 'PAY-104', 'Add retry logic to the webhook sender', 'agent-07', 'feat/pay-104-webhook-retry', 'running', 'Started 14 min ago',
+        [
+          L('dim', 'Session started · agent-07 · branch feat/pay-104-webhook-retry'),
+          L('out', 'Reading ticket PAY-104: Add retry logic to the webhook sender'),
+          L('out', '● Read src/webhooks/sender.ts'),
+          L('out', '● Read src/webhooks/queue.ts'),
+          L('out', 'Plan: wrap send() in a retry loop, back off 2^n seconds, stop after 6 attempts, record each attempt.'),
+          L('out', '● Edit src/webhooks/sender.ts'),
+          L('dim', '  +48 −6')
+        ],
+        [
+          L('out', '● Write src/webhooks/attempts.ts'),
+          L('dim', '  +31 −0 (new file)'),
+          L('out', '● Run npm test -- webhooks'),
+          L('dim', '  18 passed, 2 failed'),
+          L('out', 'Both failures are in sender.retry.spec: the fake timer is not advanced between attempts.'),
+          L('out', '● Edit test/webhooks/sender.retry.spec.ts'),
+          L('dim', '  +9 −4'),
+          L('out', '● Run npm test -- webhooks'),
+          L('ok', '20 passed'),
+          L('out', '● Run npm run lint'),
+          L('ok', 'No lint errors'),
+          L('ask', 'The backoff has no upper limit yet. Cap the delay at 1 hour? (approve / no)'),
+          L('out', '● Edit src/webhooks/sender.ts'),
+          L('dim', '  +3 −1'),
+          L('out', '● Run npm test -- webhooks'),
+          L('ok', '21 passed'),
+          L('ok', 'Committed "Retry webhook deliveries with capped backoff" on feat/pay-104-webhook-retry')
+        ]),
+      T('t2', 'PAY-107', 'Fix flaky checkout test', 'agent-03', 'fix/pay-107-flaky-checkout', 'waiting', 'Started 41 min ago',
+        [
+          L('dim', 'Session started · agent-03 · branch fix/pay-107-flaky-checkout'),
+          L('out', 'Reading ticket PAY-107: Fix flaky checkout test'),
+          L('out', '● Run npm test -- checkout.spec (20 runs)'),
+          L('dim', '  17 passed, 3 failed'),
+          L('out', 'The failures share one cause: the test reads the order total before the tax request resolves.'),
+          L('out', 'Two ways to fix it:'),
+          L('out', '  1. await the tax request in the test'),
+          L('out', '  2. mock the tax client so it resolves immediately'),
+          L('ask', 'Which fix do you want? (1 / 2)')
+        ],
+        [
+          L('out', '● Edit test/checkout/checkout.spec.ts'),
+          L('dim', '  +6 −2'),
+          L('out', '● Run npm test -- checkout.spec (50 runs)'),
+          L('ok', '50 passed, 0 failed'),
+          L('ok', 'Committed "Remove race in checkout test" on fix/pay-107-flaky-checkout')
+        ]),
+      T('t3', 'PAY-102', 'Migrate invoices table to UUID keys', 'agent-11', 'feat/pay-102-invoice-uuid', 'running', 'Started 27 min ago',
+        [
+          L('dim', 'Session started · agent-11 · branch feat/pay-102-invoice-uuid'),
+          L('out', 'Reading ticket PAY-102: Migrate invoices table to UUID keys'),
+          L('out', '● Read db/schema.sql'),
+          L('out', '● Search "invoice_id" in src/'),
+          L('dim', '  37 matches in 12 files'),
+          L('out', 'Plan: add a uuid column, backfill it, switch the foreign keys, then drop the integer key.'),
+          L('out', '● Write db/migrations/0042_invoice_uuid.sql'),
+          L('dim', '  +64 −0 (new file)')
+        ],
+        [
+          L('out', '● Run migration against the local database'),
+          L('ok', '0042_invoice_uuid applied in 1.8s'),
+          L('out', '● Edit src/invoices/repository.ts'),
+          L('dim', '  +22 −19'),
+          L('out', '● Edit src/payments/refunds.ts'),
+          L('dim', '  +5 −5'),
+          L('out', '● Run npm test -- invoices payments'),
+          L('ok', '64 passed'),
+          L('ask', 'Ready to run the migration against staging. It locks the invoices table while it runs. Proceed? (approve / no)'),
+          L('out', '● Run migration against staging'),
+          L('ok', '0042_invoice_uuid applied in 38.2s'),
+          L('out', '● Verify row counts'),
+          L('ok', 'Row counts match before and after'),
+          L('ok', 'Committed "Switch invoices to UUID primary keys" on feat/pay-102-invoice-uuid')
+        ]),
+      T('t6', 'PAY-106', 'Upgrade to Node 22', 'agent-09', 'chore/pay-106-node-22', 'running', 'Started 6 min ago',
+        node.slice(0, 6), node.slice(6)),
+      T('t5', 'PAY-111', 'Audit log export as CSV', 'agent-05', 'feat/pay-111-audit-csv', 'waiting', 'Started 52 min ago',
+        [
+          L('dim', 'Session started · agent-05 · branch feat/pay-111-audit-csv'),
+          L('out', 'Reading ticket PAY-111: Audit log export as CSV'),
+          L('out', '● Write src/admin/auditExport.ts'),
+          L('dim', '  +88 −0 (new file)'),
+          L('out', '● Edit src/admin/routes.ts'),
+          L('dim', '  +7 −0'),
+          L('out', '● Run npm test -- admin'),
+          L('ok', '31 passed'),
+          L('ok', 'Committed "Export audit log as CSV" on feat/pay-111-audit-csv'),
+          L('ask', 'The work is committed locally. Push the branch and open a pull request? (approve / no)')
+        ],
+        [
+          L('out', '● Run git push origin feat/pay-111-audit-csv'),
+          L('ok', 'Branch pushed'),
+          L('out', '● Open pull request'),
+          L('ok', 'Pull request opened: Export audit log as CSV')
+        ]),
+      T('t4', 'PAY-109', 'Rate-limit public endpoints', 'agent-02', 'feat/pay-109-rate-limit', 'done', 'Finished 1h ago',
+        [
+          L('dim', 'Session started · agent-02 · branch feat/pay-109-rate-limit'),
+          L('out', 'Reading ticket PAY-109: Rate-limit public endpoints'),
+          L('out', '● Write src/middleware/rateLimit.ts'),
+          L('dim', '  +57 −0 (new file)'),
+          L('out', '● Edit src/server.ts'),
+          L('dim', '  +4 −0'),
+          L('out', '● Run npm test -- middleware'),
+          L('ok', '12 passed'),
+          L('ok', 'Committed "Limit public API requests per key" on feat/pay-109-rate-limit'),
+          L('dim', 'Session ended · exit 0')
+        ],
+        []),
+      T('t7', 'PAY-112', 'Write onboarding docs for API keys', 'agent-04', 'docs/pay-112-api-keys', 'done', 'Finished yesterday',
+        [
+          L('dim', 'Session started · agent-04 · branch docs/pay-112-api-keys'),
+          L('out', 'Reading ticket PAY-112: Write onboarding docs for API keys'),
+          L('out', '● Read src/keys/service.ts'),
+          L('out', '● Write docs/api-keys.md'),
+          L('dim', '  +112 −0 (new file)'),
+          L('out', '● Run npm run docs:check'),
+          L('ok', 'No broken links'),
+          L('ok', 'Committed "Add API key onboarding guide" on docs/pay-112-api-keys'),
+          L('dim', 'Session ended · exit 0')
+        ],
+        [])
+    ];
+
+    this._seed = {
+      tab: 'board',
+      cards: cards,
+      tasks: tasks,
+      openCard: null,
+      openTask: null,
+      addingIn: null,
+      draft: '',
+      dragging: null,
+      dragOver: null,
+      filter: 'all',
+      nextNum: 116,
+      nextAgent: 12
+    };
+    return this._seed;
+  }
+
+  st() {
+    return Object.assign({}, this.seed(), this.state || {});
+  }
+
+  componentDidMount() {
+    this._stopped = false;
+    this.schedule();
+  }
+
+  componentWillUnmount() {
+    this._stopped = true;
+    if (this._timer) clearTimeout(this._timer);
+    this._timer = null;
+  }
+
+  schedule() {
+    if (this._stopped) return;
+    const speed = (this.props && this.props.speed) || 'normal';
+    const ms = speed === 'fast' ? 600 : (speed === 'slow' ? 2600 : 1300);
+    this._timer = setTimeout(() => {
+      this.tick();
+      this.schedule();
+    }, ms);
+  }
+
+  tick() {
+    const s = this.st();
+    let changed = false;
+    const tasks = s.tasks.map((t) => {
+      if (t.status !== 'running') return t;
+      if (Math.random() < 0.4) return t;
+      changed = true;
+      if (!t.script.length) {
+        return Object.assign({}, t, {
+          status: 'done',
+          started: 'Finished just now',
+          log: t.log.concat([{ k: 'dim', text: 'Session ended · exit 0' }]).slice(-400)
+        });
+      }
+      const next = t.script[0];
+      return Object.assign({}, t, {
+        log: t.log.concat([next]).slice(-400),
+        script: t.script.slice(1),
+        status: next.k === 'ask' ? 'waiting' : 'running',
+        paused: false
+      });
+    });
+    if (changed) this.setState({ tasks: tasks });
+  }
+
+  field(e, selector) {
+    const from = e && e.currentTarget;
+    const wrap = from && from.closest ? from.closest('[data-wb-form]') : null;
+    return wrap ? wrap.querySelector(selector) : null;
+  }
+
+  moveCard(cardId, stageId, beforeId) {
+    this._dragId = null;
+    const s = this.st();
+    const card = cardId ? s.cards.find((c) => c.id === cardId) : null;
+    if (!card || beforeId === cardId) {
+      this.setState({ dragging: null, dragOver: null });
+      return;
+    }
+    const rest = s.cards.filter((c) => c.id !== cardId);
+    const moved = Object.assign({}, card, { stage: stageId });
+    const at = beforeId ? rest.findIndex((c) => c.id === beforeId) : -1;
+    if (at < 0) rest.push(moved);
+    else rest.splice(at, 0, moved);
+    this.setState({ cards: rest, dragging: null, dragOver: null });
+  }
+
+  addCard(stageId, raw) {
+    const title = String(raw || '').trim();
+    if (!title) return;
+    const s = this.st();
+    const card = { id: 'PAY-' + s.nextNum, title: title, stage: stageId, labels: [], assignees: [], desc: '', comments: [] };
+    this.setState({ cards: s.cards.concat([card]), nextNum: s.nextNum + 1 });
+  }
+
+  toggleAssignee(cardId, userId) {
+    const s = this.st();
+    const cards = s.cards.map((c) => {
+      if (c.id !== cardId) return c;
+      const has = c.assignees.indexOf(userId) >= 0;
+      const next = has ? c.assignees.filter((x) => x !== userId) : c.assignees.concat([userId]);
+      return Object.assign({}, c, { assignees: next });
+    });
+    this.setState({ cards: cards });
+  }
+
+  insertMention(e, handle) {
+    const el = this.field(e, 'textarea');
+    if (!el) return;
+    const cur = el.value;
+    let next;
+    if (/(^|\s)@[A-Za-z]*$/.test(cur)) {
+      next = cur.replace(/@[A-Za-z]*$/, '@' + handle + ' ');
+    } else {
+      next = cur + (cur && !/\s$/.test(cur) ? ' ' : '') + '@' + handle + ' ';
+    }
+    el.value = next;
+    el.focus();
+    this.setState({ draft: next });
+  }
+
+  postComment(el) {
+    if (!el) return;
+    const text = String(el.value || '').trim();
+    if (!text) return;
+    const s = this.st();
+    if (!s.openCard) return;
+    const cards = s.cards.map((c) => {
+      if (c.id !== s.openCard) return c;
+      return Object.assign({}, c, { comments: c.comments.concat([{ by: 'you', when: 'Just now', text: text }]) });
+    });
+    el.value = '';
+    this.setState({ cards: cards, draft: '' });
+  }
+
+  startAgent(cardId) {
+    const s = this.st();
+    const card = s.cards.find((c) => c.id === cardId);
+    if (!card) return;
+    const n = s.nextAgent;
+    const agent = 'agent-' + (n < 10 ? '0' + n : n);
+    const branch = 'feat/' + card.id.toLowerCase();
+    const L = (k, text) => ({ k: k, text: text });
+    const full = [
+      L('dim', 'Session started · ' + agent + ' · branch ' + branch),
+      L('out', 'Reading ticket ' + card.id + ': ' + card.title),
+      L('out', '● Search the repo for related code'),
+      L('dim', '  9 files look relevant'),
+      L('out', '● Read the 9 files'),
+      L('out', 'Plan drafted: 4 steps, 3 files to change, tests included.'),
+      L('ask', 'The plan is ready. Start implementing? (approve / no)'),
+      L('out', '● Edit 3 files'),
+      L('dim', '  +74 −18'),
+      L('out', '● Run npm test'),
+      L('ok', 'All tests passed'),
+      L('ok', 'Committed the change on ' + branch)
+    ];
+    const task = {
+      id: 't' + Date.now(), cardId: card.id, name: card.title, agent: agent, branch: branch,
+      status: 'running', started: 'Started just now', paused: false,
+      log: full.slice(0, 1), script: full.slice(1), full: full
+    };
+    this.setState({ tasks: [task].concat(s.tasks), nextAgent: n + 1 });
+  }
+
+  runCommand(taskId, raw) {
+    const cmd = String(raw || '').trim();
+    if (!cmd) return;
+    const lc = cmd.toLowerCase();
+    const s = this.st();
+    const meta = this.statusMeta();
+    const tasks = s.tasks.map((t) => {
+      if (t.id !== taskId) return t;
+      let log = t.log.concat([{ k: 'cmd', text: cmd }]);
+      let status = t.status;
+      let script = t.script;
+      let started = t.started;
+      let paused = t.paused;
+      const say = (k, text) => { log.push({ k: k, text: text }); };
+      const label = meta[status].label.toLowerCase();
+
+      if (lc === 'clear') {
+        log = [];
+      } else if (lc === 'help') {
+        say('dim', 'Commands');
+        say('out', '  status    show what the agent is doing');
+        say('out', '  pause     hold the run until you resume it');
+        say('out', '  resume    continue a paused run');
+        say('out', '  approve   say yes to the pending question');
+        say('out', '  no        decline the pending question');
+        say('out', '  stop      end the run');
+        say('out', '  restart   run the task again from the first step');
+        say('out', '  clear     clear this screen');
+        say('dim', 'Anything else is sent to the agent as a message.');
+      } else if (lc === 'status') {
+        say('out', 'Status: ' + label + ' · ' + script.length + (script.length === 1 ? ' step' : ' steps') + ' queued · ' + t.agent + ' on ' + t.branch);
+      } else if (lc === 'pause') {
+        if (status === 'running') {
+          status = 'waiting';
+          paused = true;
+          say('ask', 'Paused. Type resume to continue.');
+        } else {
+          say('dim', 'Nothing to pause: the run is ' + label + '.');
+        }
+      } else if (lc === 'stop') {
+        if (status === 'done') {
+          say('dim', 'The run has already ended.');
+        } else {
+          status = 'done';
+          script = [];
+          paused = false;
+          started = 'Stopped just now';
+          say('dim', 'Stopped by user · session ended');
+        }
+      } else if (lc === 'restart') {
+        status = 'running';
+        script = t.full.slice();
+        paused = false;
+        started = 'Started just now';
+        say('dim', 'Restarting the run from the first step');
+      } else if (status === 'waiting') {
+        if (paused) {
+          say('dim', 'Resuming');
+        } else if (lc === 'no' || lc === 'n' || lc === 'deny') {
+          script = [];
+          say('out', 'Understood. I will not do that, and I am wrapping up here.');
+        } else if (lc === 'approve' || lc === 'yes' || lc === 'y' || lc === 'ok' || lc === 'resume') {
+          say('ok', 'Approved. Continuing.');
+        } else {
+          say('out', 'Got it: "' + cmd + '". Continuing with that.');
+        }
+        status = 'running';
+        paused = false;
+      } else if (status === 'running') {
+        if (lc === 'resume') say('dim', 'Already running.');
+        else say('out', 'Noted: "' + cmd + '". I will take it into account on the next step.');
+      } else {
+        say('dim', 'This run has finished. Type restart to run it again.');
+      }
+
+      return Object.assign({}, t, { log: log.slice(-400), status: status, script: script, started: started, paused: paused });
+    });
+    this.setState({ tasks: tasks });
+  }
+
+  parts(text, handles) {
+    return String(text).split(/(@[A-Za-z]+)/).filter((x) => x !== '').map((x) => {
+      const hit = x.charAt(0) === '@' && handles[x.slice(1).toLowerCase()] === true;
+      return {
+        text: x,
+        color: hit ? '#1E3FB8' : '#161A22',
+        bg: hit ? '#E3EAFF' : 'transparent',
+        weight: hit ? '600' : '400',
+        pad: hit ? '1px 5px' : '0'
+      };
+    });
+  }
+
+  renderVals() {
+    const s = this.st();
+    const accent = this.props.accent ?? '#2F5BEA';
+    const users = this.users();
+    const stages = this.stages();
+    const meta = this.statusMeta();
+
+    const userById = {};
+    const handles = {};
+    users.forEach((u) => {
+      userById[u.id] = u;
+      handles[u.handle.toLowerCase()] = true;
+    });
+    const stageName = {};
+    stages.forEach((g) => { stageName[g.id] = g.name; });
+    const taskByCard = {};
+    s.tasks.forEach((t) => {
+      if (t.cardId && !taskByCard[t.cardId]) taskByCard[t.cardId] = t;
+    });
+
+    const pill = (status) => {
+      const m = meta[status];
+      return {
+        statusLabel: m.label,
+        pillBg: m.bg,
+        pillFg: m.fg,
+        dot: m.dot,
+        dotAnim: status === 'running' ? 'wb-pulse 1.4s ease-in-out infinite' : 'none'
+      };
+    };
+
+    const columns = stages.map((g) => {
+      const cards = s.cards.filter((c) => c.stage === g.id).map((c) => {
+        const t = taskByCard[c.id];
+        const p = t ? pill(t.status) : null;
+        return {
+          id: c.id,
+          title: c.title,
+          labels: c.labels.map((x) => ({ text: x })),
+          hasLabels: c.labels.length > 0,
+          commentCount: c.comments.length,
+          hasComments: c.comments.length > 0,
+          people: c.assignees.map((id) => userById[id]).filter(Boolean),
+          hasAgent: !!t,
+          agentLabel: p ? 'Agent ' + p.statusLabel.toLowerCase() : '',
+          agentBg: p ? p.pillBg : 'transparent',
+          agentFg: p ? p.pillFg : '#3A414E',
+          agentDot: p ? p.dot : 'transparent',
+          agentAnim: p ? p.dotAnim : 'none',
+          opacity: s.dragging === c.id ? '0.4' : '1',
+          open: () => this.setState({ openCard: c.id, openTask: null, draft: '' }),
+          onDragStart: (e) => {
+            this._dragId = c.id;
+            if (e.dataTransfer) {
+              e.dataTransfer.effectAllowed = 'move';
+              try { e.dataTransfer.setData('text/plain', c.id); } catch (err) { /* some browsers refuse */ }
+            }
+            setTimeout(() => this.setState({ dragging: c.id }), 0);
+          },
+          onDragEnd: () => {
+            this._dragId = null;
+            this.setState({ dragging: null, dragOver: null });
+          },
+          onDragOver: (e) => { e.preventDefault(); },
+          onDrop: (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this.moveCard(this._dragId, c.stage, c.id);
+          }
+        };
+      });
+      const adding = s.addingIn === g.id;
+      return {
+        id: g.id,
+        name: g.name,
+        count: cards.length,
+        cards: cards,
+        isEmpty: cards.length === 0,
+        adding: adding,
+        notAdding: !adding,
+        accent: accent,
+        ring: (s.dragging && s.dragOver === g.id) ? accent : 'transparent',
+        onDragOver: (e) => {
+          e.preventDefault();
+          if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+          if (this.st().dragOver !== g.id) this.setState({ dragOver: g.id });
+        },
+        onDrop: (e) => {
+          e.preventDefault();
+          this.moveCard(this._dragId, g.id, null);
+        },
+        startAdd: () => this.setState({ addingIn: g.id }),
+        cancelAdd: () => this.setState({ addingIn: null }),
+        onAddKey: (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            const v = e.target.value;
+            e.target.value = '';
+            this.addCard(g.id, v);
+          } else if (e.key === 'Escape') {
+            this.setState({ addingIn: null });
+          }
+        },
+        onAddClick: (e) => {
+          const el = this.field(e, 'input');
+          if (!el) return;
+          const v = el.value;
+          el.value = '';
+          el.focus();
+          this.addCard(g.id, v);
+        }
+      };
+    });
+
+    const counts = { all: s.tasks.length, running: 0, waiting: 0, done: 0 };
+    s.tasks.forEach((t) => { counts[t.status] += 1; });
+    const filters = [['all', 'All'], ['running', 'Running'], ['waiting', 'Waiting on user'], ['done', 'Done']].map((f) => {
+      const on = s.filter === f[0];
+      return {
+        label: f[1],
+        count: counts[f[0]],
+        on: on,
+        bg: on ? '#161A22' : '#FFFFFF',
+        fg: on ? '#FFFFFF' : '#161A22',
+        border: on ? '#161A22' : '#D9DDE5',
+        countBg: on ? '#3A414E' : '#EEF0F4',
+        countFg: on ? '#FFFFFF' : '#3A414E',
+        pick: () => this.setState({ filter: f[0] })
+      };
+    });
+
+    const prefix = { cmd: '❯ ', ok: '✓ ', ask: '? ' };
+    const lineColor = { dim: '#8B94A7', out: '#D5DAE3', cmd: '#8FB0FF', ok: '#86D9A8', ask: '#FFC27A' };
+    const lineText = (l) => (prefix[l.k] || '') + l.text;
+    const rank = { waiting: 0, running: 1, done: 2 };
+
+    const taskRows = s.tasks.slice()
+      .sort((a, b) => rank[a.status] - rank[b.status])
+      .filter((t) => s.filter === 'all' || t.status === s.filter)
+      .map((t) => {
+        const last = t.log.length ? t.log[t.log.length - 1] : null;
+        return Object.assign(pill(t.status), {
+          name: t.name,
+          sub: (t.cardId ? t.cardId + ' · ' : '') + t.agent,
+          last: last ? lineText(last).trim() : 'No output yet',
+          started: t.started,
+          open: () => this.setState({ openTask: t.id, openCard: null })
+        });
+      });
+
+    let cm = {
+      id: '', title: '', stageName: '', desc: '', commentHeading: 'Comments', noComments: false,
+      comments: [], people: [], stages: [], assignees: [], labels: [], hasLabels: false,
+      hasAgent: false, noAgent: false, statusLabel: '', pillBg: 'transparent', pillFg: '#3A414E',
+      dot: 'transparent', dotAnim: 'none', agentSub: '', accent: accent,
+      openTerminal: () => {}, startAgent: () => {}
+    };
+    const oc = s.openCard ? s.cards.find((c) => c.id === s.openCard) : null;
+    if (oc) {
+      const t = taskByCard[oc.id];
+      const p = pill(t ? t.status : 'done');
+      const typed = /(^|\s)@([A-Za-z]*)$/.exec(s.draft || '');
+      const q = typed ? typed[2].toLowerCase() : '';
+      let taggable = users.filter((u) => u.id !== 'you');
+      const matched = taggable.filter((u) => u.handle.toLowerCase().indexOf(q) === 0);
+      if (q && matched.length) taggable = matched;
+      const n = oc.comments.length;
+      cm = Object.assign(cm, p, {
+        id: oc.id,
+        title: oc.title,
+        stageName: stageName[oc.stage],
+        desc: oc.desc || 'No description yet.',
+        commentHeading: n === 1 ? '1 comment' : n + ' comments',
+        noComments: n === 0,
+        comments: oc.comments.map((c) => {
+          const u = userById[c.by] || users[0];
+          return { author: u.name, initials: u.initials, color: u.color, when: c.when, parts: this.parts(c.text, handles) };
+        }),
+        people: taggable.map((u) => ({
+          initials: u.initials,
+          color: u.color,
+          at: '@' + u.handle,
+          pick: (e) => this.insertMention(e, u.handle)
+        })),
+        stages: stages.map((g) => {
+          const on = g.id === oc.stage;
+          return {
+            name: g.name,
+            on: on,
+            bg: on ? '#161A22' : '#FFFFFF',
+            fg: on ? '#FFFFFF' : '#161A22',
+            border: on ? '#161A22' : '#D9DDE5',
+            pick: () => { if (!on) this.moveCard(oc.id, g.id, null); }
+          };
+        }),
+        assignees: users.map((u) => {
+          const on = oc.assignees.indexOf(u.id) >= 0;
+          return {
+            first: u.first,
+            initials: u.initials,
+            color: u.color,
+            on: on,
+            bg: on ? '#E3EAFF' : '#FFFFFF',
+            fg: on ? '#1E3FB8' : '#161A22',
+            border: on ? '#2F5BEA' : '#D9DDE5',
+            weight: on ? '600' : '500',
+            check: on ? 'inline-flex' : 'none',
+            toggle: () => this.toggleAssignee(oc.id, u.id)
+          };
+        }),
+        labels: oc.labels.map((x) => ({ text: x })),
+        hasLabels: oc.labels.length > 0,
+        hasAgent: !!t,
+        noAgent: !t,
+        agentSub: t ? t.agent + ' · ' + t.branch : '',
+        openTerminal: () => { if (t) this.setState({ openCard: null, openTask: t.id }); },
+        startAgent: () => this.startAgent(oc.id)
+      });
+    }
+
+    let tm = {
+      name: '', sub: '', lines: [], quick: [], hint: '', hintColor: '#8B94A7', cursorAnim: 'none',
+      hasCard: false, statusLabel: '', pillBg: 'transparent', pillFg: '#FFFFFF', dot: 'transparent',
+      dotAnim: 'none', accent: accent, viewCard: () => {}, onKey: () => {}, onSend: () => {}
+    };
+    const ot = s.openTask ? s.tasks.find((t) => t.id === s.openTask) : null;
+    if (ot) {
+      let quick = ['restart', 'status', 'help'];
+      let hint = 'run finished · type restart to run it again';
+      let hintColor = '#8B94A7';
+      if (ot.status === 'running') {
+        quick = ['status', 'pause', 'stop', 'help'];
+        hint = 'working';
+      } else if (ot.status === 'waiting') {
+        quick = ot.paused ? ['resume', 'status', 'stop', 'help'] : ['approve', 'no', 'status', 'help'];
+        hint = ot.paused ? 'paused · type resume to continue' : 'waiting for your reply';
+        hintColor = '#FFC27A';
+      }
+      tm = Object.assign(tm, pill(ot.status), {
+        name: ot.name,
+        sub: [ot.cardId, ot.agent, ot.branch].filter(Boolean).join(' · '),
+        lines: ot.log.map((l) => ({ text: lineText(l), color: lineColor[l.k] || '#D5DAE3' })),
+        quick: quick.map((c) => ({ label: c, run: () => this.runCommand(ot.id, c) })),
+        hint: hint,
+        hintColor: hintColor,
+        cursorAnim: ot.status === 'running' ? 'wb-blink 1s linear infinite' : 'none',
+        hasCard: !!ot.cardId && s.cards.some((c) => c.id === ot.cardId),
+        viewCard: () => this.setState({ openTask: null, openCard: ot.cardId, draft: '' }),
+        onKey: (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            const v = e.target.value;
+            e.target.value = '';
+            this.runCommand(ot.id, v);
+          }
+        },
+        onSend: (e) => {
+          const el = this.field(e, 'input');
+          if (!el) return;
+          const v = el.value;
+          el.value = '';
+          el.focus();
+          this.runCommand(ot.id, v);
+        }
+      });
+    }
+
+    const isBoard = s.tab !== 'tasks';
+    const tabLook = (on) => ({
+      current: on ? 'page' : 'false',
+      line: on ? accent : 'transparent',
+      color: on ? '#161A22' : '#5A6272'
+    });
+    const total = s.cards.length;
+
+    return {
+      accent: accent,
+      isBoard: isBoard,
+      isTasks: !isBoard,
+      boardTab: tabLook(isBoard),
+      tasksTab: tabLook(!isBoard),
+      showBoard: () => this.setState({ tab: 'board' }),
+      showTasks: () => this.setState({ tab: 'tasks', addingIn: null }),
+      hasWaiting: counts.waiting > 0,
+      waitingCount: counts.waiting,
+      team: users.slice().reverse().map((u) => ({ name: u.name, initials: u.initials, color: u.color })),
+      boardSummary: total + (total === 1 ? ' card' : ' cards') + ' across ' + stages.length + ' stages',
+      columns: columns,
+      filters: filters,
+      taskRows: taskRows,
+      noTasks: taskRows.length === 0,
+      hasCardModal: !!oc,
+      cm: cm,
+      closeCard: () => this.setState({ openCard: null, draft: '' }),
+      onCardKey: (e) => { if (e.key === 'Escape') this.setState({ openCard: null, draft: '' }); },
+      onDraft: (e) => this.setState({ draft: e.target.value }),
+      onCommentKey: (e) => {
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault();
+          this.postComment(e.target);
+        }
+      },
+      postComment: (e) => this.postComment(this.field(e, 'textarea')),
+      hasTaskModal: !!ot,
+      tm: tm,
+      closeTask: () => this.setState({ openTask: null }),
+      onTaskKey: (e) => { if (e.key === 'Escape') this.setState({ openTask: null }); }
+    };
+  }
+}
+</script>
+</body>
+</html>
