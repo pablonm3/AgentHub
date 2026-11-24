@@ -231,8 +231,6 @@ describe('views rendered from contract-shaped data', () => {
 })
 
 describe('voice input controls', () => {
-  // The fields that offer voice input: the ticket comment box, the Activity reply box, the
-  // task message box, the Description of "Add a card" and the Message of "New task".
   const fields = async () => {
     openTicket(1)
     await loadTicketDetail()
