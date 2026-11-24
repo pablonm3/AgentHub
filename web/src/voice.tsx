@@ -18,6 +18,8 @@ export function useDictation(setText: (update: (text: string) => string) => void
   const [listening, setListening] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const session = useRef<DictationSession | null>(null)
+  // The session ends when the field's form leaves the screen: a closed form or dialog, another page.
+  useEffect(() => () => session.current?.cancel(), [])
   const Ctor = recognizerCtor()
 
   const cancel = () => session.current?.cancel()
@@ -46,9 +48,6 @@ export function useDictation(setText: (update: (text: string) => string) => void
 
 /** The microphone control beside a field; nothing when the browser has no speech recognition. */
 export function MicButton({ voice, disabled = false, darkMode = false }: { voice: Dictation; disabled?: boolean; darkMode?: boolean }) {
-  // The session ends when the control leaves the screen: a closed form or dialog, another page.
-  // `cancel` reads the session from a ref, so the one captured at mount ends the current session.
-  useEffect(() => () => voice.cancel(), [])
   if (!voice.supported) return null
 
   const on = voice.listening

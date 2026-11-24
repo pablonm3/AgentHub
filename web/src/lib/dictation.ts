@@ -90,15 +90,15 @@ export function startDictation(Ctor: RecognizerCtor, handlers: DictationHandlers
   recognizer.interimResults = false
 
   let ended = false
-  let message: string | null = null
-  const finish = (text: string | null) => {
+  let pendingError: string | null = null
+  const finish = (errorMessage: string | null) => {
     if (ended) return
     ended = true
     recognizer.onresult = null
     recognizer.onerror = null
     recognizer.onend = null
     if (active === session) active = null
-    handlers.onEnd(text)
+    handlers.onEnd(errorMessage)
   }
 
   recognizer.onresult = (event) => {
@@ -110,9 +110,9 @@ export function startDictation(Ctor: RecognizerCtor, handlers: DictationHandlers
   }
   // The browser fires `error`, then `end`: the message is reported when the session ends.
   recognizer.onerror = (event) => {
-    message = dictationErrorMessage(event.error)
+    pendingError = dictationErrorMessage(event.error)
   }
-  recognizer.onend = () => finish(message)
+  recognizer.onend = () => finish(pendingError)
 
   const session: DictationSession = {
     stop: () => {
