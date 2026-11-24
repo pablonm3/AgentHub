@@ -31,7 +31,7 @@ export default function DescriptionField({
   onKeyDown,
 }: Props) {
   const field = useRef<HTMLTextAreaElement>(null)
-  // The value as of the last keystroke or the last scroll; a different value arriving from props is dictated text.
+  // The value last typed or last scrolled to by the effect below; any other value from props is dictated text.
   const lastSeenValue = useRef(value)
 
   // The browser keeps the cursor in sight for typed text only. A change that was not typed
