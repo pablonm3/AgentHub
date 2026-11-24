@@ -1,0 +1,75 @@
+# Tests and builds on every push and, on main, deploys to the server that runs the
+# installed copy of the app.
+#
+# The deploy is one SSH login with a key that the server restricts to a single command,
+# its installed copy of deploy/deploy_app.sh: it reads the built web/dist on stdin, moves
+# the checkout to origin/main, installs the UI, restarts the app when the push changed
+# more than the UI, checks that the app answers and goes back to the commit and the UI
+# that were running when it does not.
+#
+# Repository secrets, all three set by deploy/setup_deploy.sh: DEPLOY_KEY (private key),
+# DEPLOY_KNOWN_HOSTS (the server's host key lines), DEPLOY_TARGET (user@host).
+name: Build and deploy
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # one run per branch at a time; on main this means one deploy at a time
+    concurrency:
+      group: deploy-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      # the private folder (a submodule in a private repo) is not checked out: the tests
+      # make their own, and the server has its own copy
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: UI tests and build
+        run: |
+          npm --prefix web ci
+          npm --prefix web test
+          npm --prefix web run build
+
+      # setup-uv publishes exact version tags only (no moving v10 tag)
+      - uses: astral-sh/setup-uv@v10.4.0
+
+      - name: Server tests
+        run: |
+          # the tests commit in temp repositories, and a runner has no git identity
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.invalid"
+          git config --global init.defaultBranch main
+          uv sync --locked
+          uv run python scripts/check_public_tree.py
+          uv run pytest -q
+
+      - name: Deploy to the server
+        if: github.ref == 'refs/heads/main'
+        env:
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_TARGET: ${{ secrets.DEPLOY_TARGET }}
+        run: |
+          if [ -z "$DEPLOY_KEY" ] || [ -z "$DEPLOY_KNOWN_HOSTS" ] || [ -z "$DEPLOY_TARGET" ]; then
+            echo "::error::Deploy secrets are not set. Run deploy/setup_deploy.sh once (README, Deployment)."
+            exit 1
+          fi
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          # the server runs its deploy script whatever the command; the sha says which
+          # commit this UI was built from, and only origin/main's commit is deployed
+          tar -C web/dist -czf - . | ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes \
+              -o StrictHostKeyChecking=yes "$DEPLOY_TARGET" "$GITHUB_SHA"

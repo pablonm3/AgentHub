@@ -22,6 +22,7 @@ the run's gates reach Pablo as comments.
 | `harness/`, `workflows/`, `skills/general/`, `agentmds/GENERAL.md`, `docs/WORKFLOW_SPEC.md`, `observability/otel.env` | the harness copy: orchestrator, workflows `feature-v1` and `regression-v1`, the harness skills and rules |
 | `skills/agents/` | the AI users' shared skills: `search-history` (search tickets, comments and task chats, archived ones included) and `coding-harness` |
 | `scripts/check_public_tree.py` | fails when a tracked file holds private content; run it before every commit |
+| `deploy/`, `.github/workflows/deploy.yml` | tests on every push, and the deploy of a copy installed on a server on every push to `main` (see Deployment) |
 | `private/` | git submodule `AgentHub-private` (private): `agents.md`, `.env`, the harness manifest `harness.yaml`, every project's `AGENTS.md` and skills. Its `README.md` describes it. Nothing of it is tracked here |
 | `prototype/Main.dc.html` | the interface prototype the UI follows (a claude.ai Design artboard; it does not render on its own) |
 | `data/` | created at run time, never committed: `agenthub.db`, `tasks/<id>/` (workspace, turn transcripts), `reports/<task id>/`, `orchestrator/` (the harness copy's tickets, runs, logs, worktrees) |
@@ -80,3 +81,27 @@ When the shared SigNoz collector answers (ports from `private/.env`), every AI t
 step sends telemetry with `app=agenthub`, `task_id` and `ai_user`; filter on `app = agenthub` to see
 AgentHub alone. AgentHub never starts, stops or configures the instance, and tasks run the same when
 it is down.
+
+## Deployment
+
+A copy installed on a server is kept on `main` by `.github/workflows/deploy.yml`. Every push runs
+the UI tests and build and the server tests; on `main` it then sends the built `web/dist` over SSH
+to the server, with a key that may run only the server's copy of `deploy/deploy_app.sh`. That script
+deploys only the commit `origin/main` points at: it fast-forwards the checkout (`~/AgentHub`),
+installs the uploaded UI and, when the push changed more than `web/`, `.github/`, `deploy/` or
+`README.md`, runs `uv sync --locked` and restarts the pm2 app. It then checks that the app answers
+and serves the new page, and goes back to the commit and the UI that were running when it does not
+(the workflow run then fails). It logs to `~/agenthub-deploy/deploy.log`.
+
+- A restart interrupts the tasks that are running: each is shown as waiting on the user, and a
+  message continues it. A push that changes only the UI does not restart the app.
+- The private folder is left as it is when it already contains the commit `main` records, and is
+  fast-forwarded to it otherwise.
+- Commits or edits made in the server's checkout stop the deploy; they are never overwritten.
+- To go back to an older version, revert the commit on `main`: the push deploys the revert.
+
+One-time setup, from a clone on your own computer, with the app already installed on the server (a
+clone in `~/AgentHub` on `main`, run by pm2 from `~/agenthub-deploy/ecosystem.config.js`):
+`deploy/setup_deploy.sh <user@host>`. It creates the deploy key, installs the script on the server
+and stores the three repository secrets. Run it again after changing `deploy/deploy_app.sh`: a
+deploy never replaces the script it runs.
