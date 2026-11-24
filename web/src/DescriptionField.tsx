@@ -31,14 +31,15 @@ export default function DescriptionField({
   onKeyDown,
 }: Props) {
   const field = useRef<HTMLTextAreaElement>(null)
-  const typed = useRef(value)
+  // The value as of the last keystroke or the last scroll; a different value arriving from props is dictated text.
+  const lastSeenValue = useRef(value)
 
   // The browser keeps the cursor in sight for typed text only. A change that was not typed
   // is a dictated phrase, added at the end: show the end.
   useLayoutEffect(() => {
     const el = field.current
-    if (!el || value === typed.current) return
-    typed.current = value
+    if (!el || value === lastSeenValue.current) return
+    lastSeenValue.current = value
     el.scrollTop = el.scrollHeight
     el.scrollIntoView({ block: 'nearest' })
   }, [value])
@@ -54,7 +55,7 @@ export default function DescriptionField({
         placeholder={placeholder}
         autoFocus={autoFocus}
         onChange={(e) => {
-          typed.current = e.target.value
+          lastSeenValue.current = e.target.value
           onChange(e.target.value)
         }}
         onKeyDown={onKeyDown}

@@ -83,7 +83,6 @@ export default function AddTicketForm({ stageId, onClose }: { stageId: string; o
     { value: NEW_PROJECT, label: 'New project' },
     { value: NO_PROJECT, label: 'No project' },
   ]
-  const shownName = projectName.trim() || 'the project name'
   const stageName = boot.stages.find((g) => g.id === stageId)?.name ?? stageId
   // Escape, the backdrop and the close button land here; nothing closes while a submit is in flight.
   const close = () => {
@@ -149,56 +148,15 @@ export default function AddTicketForm({ stageId, onClose }: { stageId: string; o
             options={options}
           />
           {isNew && (
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 8,
-                padding: 10,
-                borderRadius: 10,
-                background: color.surface,
-                border: `1px solid ${color.line}`,
-              }}
-            >
-              <FieldLabel htmlFor={`${uid}-pname`}>Project name</FieldLabel>
-              <input
-                id={`${uid}-pname`}
-                type="text"
-                autoComplete="off"
-                value={projectName}
-                disabled={busy}
-                onChange={(e) => setProjectName(e.target.value)}
-                style={input}
-              />
-              <FieldLabel htmlFor={`${uid}-purl`}>Repo URL (optional)</FieldLabel>
-              <input
-                id={`${uid}-purl`}
-                type="text"
-                autoComplete="off"
-                placeholder="git@github.com:owner/repo.git"
-                value={repoUrl}
-                disabled={busy}
-                onChange={(e) => setRepoUrl(e.target.value)}
-                style={input}
-              />
-              <p style={{ margin: 0, color: color.muted, fontSize: 12, lineHeight: '17px' }}>
-                Leave the URL empty to create a private GitHub repository named <strong>{shownName}</strong> on the
-                account <code style={{ fontFamily: font.mono }}>gh</code> is logged in with.
-              </p>
-              {newProjectError && (
-                <div role="alert" style={{ color: color.errorInk, fontSize: 13, lineHeight: '18px', overflowWrap: 'anywhere' }}>
-                  <p style={{ margin: 0 }}>{newProjectError.message}</p>
-                  {newProjectError.createdRepo && (
-                    <p style={{ margin: '4px 0 0' }}>
-                      Repository created:{' '}
-                      <a href={repoWebUrl(newProjectError.createdRepo) ?? newProjectError.createdRepo} target="_blank" rel="noopener noreferrer">
-                        {newProjectError.createdRepo}
-                      </a>
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
+            <NewProjectFields
+              uid={uid}
+              name={projectName}
+              onName={setProjectName}
+              url={repoUrl}
+              onUrl={setRepoUrl}
+              busy={busy}
+              error={newProjectError}
+            />
           )}
           {formError && (
             <ErrorText>{formError}</ErrorText>
@@ -214,5 +172,72 @@ export default function AddTicketForm({ stageId, onClose }: { stageId: string; o
         </div>
       </form>
     </Dialog>
+  )
+}
+
+interface NewProjectFieldsProps {
+  uid: string
+  name: string
+  onName: (name: string) => void
+  url: string
+  onUrl: (url: string) => void
+  busy: boolean
+  error: NewProjectError | null
+}
+
+/** The "New project" panel of the form: name, optional repo URL, and the error of the last attempt. */
+function NewProjectFields({ uid, name, onName, url, onUrl, busy, error }: NewProjectFieldsProps) {
+  const shownName = name.trim() || 'the project name'
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        padding: 10,
+        borderRadius: 10,
+        background: color.surface,
+        border: `1px solid ${color.line}`,
+      }}
+    >
+      <FieldLabel htmlFor={`${uid}-pname`}>Project name</FieldLabel>
+      <input
+        id={`${uid}-pname`}
+        type="text"
+        autoComplete="off"
+        value={name}
+        disabled={busy}
+        onChange={(e) => onName(e.target.value)}
+        style={input}
+      />
+      <FieldLabel htmlFor={`${uid}-purl`}>Repo URL (optional)</FieldLabel>
+      <input
+        id={`${uid}-purl`}
+        type="text"
+        autoComplete="off"
+        placeholder="git@github.com:owner/repo.git"
+        value={url}
+        disabled={busy}
+        onChange={(e) => onUrl(e.target.value)}
+        style={input}
+      />
+      <p style={{ margin: 0, color: color.muted, fontSize: 12, lineHeight: '17px' }}>
+        Leave the URL empty to create a private GitHub repository named <strong>{shownName}</strong> on the
+        account <code style={{ fontFamily: font.mono }}>gh</code> is logged in with.
+      </p>
+      {error && (
+        <div role="alert" style={{ color: color.errorInk, fontSize: 13, lineHeight: '18px', overflowWrap: 'anywhere' }}>
+          <p style={{ margin: 0 }}>{error.message}</p>
+          {error.createdRepo && (
+            <p style={{ margin: '4px 0 0' }}>
+              Repository created:{' '}
+              <a href={repoWebUrl(error.createdRepo) ?? error.createdRepo} target="_blank" rel="noopener noreferrer">
+                {error.createdRepo}
+              </a>
+            </p>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
