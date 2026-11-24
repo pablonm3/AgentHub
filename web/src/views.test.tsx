@@ -4,8 +4,10 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import ActivityPage from './ActivityPage'
+import AddTicketForm from './AddTicketForm'
 import App from './App'
 import Board from './Board'
+import NewTaskForm from './NewTaskForm'
 import SettingsPage from './SettingsPage'
 import TaskDialog from './TaskDialog'
 import TasksPage from './TasksPage'
@@ -225,5 +227,36 @@ describe('views rendered from contract-shaped data', () => {
     const settings = text(renderToStaticMarkup(<SettingsPage />))
     expect(settings).toContain('You are the engineer.')
     expect(settings).toContain('Logged in')
+  })
+})
+
+describe('voice input controls', () => {
+  // The fields that offer voice input: the ticket comment box, the Activity reply box, the
+  // task message box, the Description of "Add a card" and the Message of "New task".
+  const fields = async () => {
+    openTicket(1)
+    await loadTicketDetail()
+    openTask(3)
+    await loadTaskDetail()
+    return [
+      renderToStaticMarkup(<TicketDialog />),
+      renderToStaticMarkup(<ActivityPage />),
+      renderToStaticMarkup(<TaskDialog />),
+      renderToStaticMarkup(<AddTicketForm stageId="backlog" onClose={() => {}} />),
+      renderToStaticMarkup(<NewTaskForm onClose={() => {}} />),
+    ]
+  }
+
+  it('shows a microphone control at each field when the browser offers speech recognition', async () => {
+    vi.stubGlobal('SpeechRecognition', class {})
+    try {
+      for (const html of await fields()) expect(html).toContain('aria-label="Start voice input"')
+    } finally {
+      vi.stubGlobal('SpeechRecognition', undefined)
+    }
+  })
+
+  it('shows no microphone control when the browser offers none', async () => {
+    for (const html of await fields()) expect(html).not.toContain('voice input')
   })
 })

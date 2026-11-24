@@ -4,6 +4,7 @@ import { mentionedHandles, TRAILING_MENTION, withMention } from './lib/mentions'
 import { useAppState } from './store'
 import { color, textarea } from './theme'
 import { Avatar, Button, ErrorText } from './ui'
+import { MicButton, useDictation } from './voice'
 
 /**
  * The comment field used by the ticket dialog and by each Activity entry: a textarea, "Tag
@@ -30,6 +31,7 @@ export default function CommentBox({
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const voice = useDictation(setDraft)
 
   const handles = useMemo(() => users.map((u) => u.handle), [users])
   const mentioned = mentionedHandles(draft, handles)
@@ -48,6 +50,7 @@ export default function CommentBox({
   const submit = async () => {
     const body = draft.trim()
     if (!body || busy) return
+    voice.cancel()
     setBusy(true)
     setError(null)
     try {
@@ -72,22 +75,26 @@ export default function CommentBox({
       >
         {label}
       </label>
-      <textarea
-        id={id}
-        ref={field}
-        rows={rows}
-        value={draft}
-        placeholder={placeholder}
-        disabled={busy}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-            e.preventDefault()
-            void submit()
-          }
-        }}
-        style={{ ...textarea, minHeight: rows * 20 + 22 }}
-      />
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+        <textarea
+          id={id}
+          ref={field}
+          rows={rows}
+          value={draft}
+          placeholder={placeholder}
+          disabled={busy}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault()
+              void submit()
+            }
+          }}
+          style={{ ...textarea, minHeight: rows * 20 + 22, flex: '1 1 0', minWidth: 0 }}
+        />
+        <MicButton voice={voice} disabled={busy} />
+      </div>
+      {voice.error && <ErrorText>{voice.error}</ErrorText>}
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
         <span style={{ marginRight: 2, color: color.muted, fontSize: 13 }}>Tag someone</span>
         {chips.map((u) => {

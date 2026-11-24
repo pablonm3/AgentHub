@@ -3,6 +3,7 @@ import { api, errorMessage } from './api'
 import { applyTaskDetail, loadTasks, openTask, useAppState } from './store'
 import { color, font, textarea } from './theme'
 import { Button, CloseButton, Dialog, ErrorText, FieldLabel, Select } from './ui'
+import { MicButton, useDictation } from './voice'
 
 /** "New task": a task without a ticket, for an AI user Pablo must pick. */
 export default function NewTaskForm({ onClose }: { onClose: () => void }) {
@@ -13,6 +14,7 @@ export default function NewTaskForm({ onClose }: { onClose: () => void }) {
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const voice = useDictation(setMessage)
   if (!boot) return null
 
   const aiUsers = boot.users.filter((u) => u.kind === 'ai')
@@ -24,6 +26,7 @@ export default function NewTaskForm({ onClose }: { onClose: () => void }) {
       setError('Write the first message for the task.')
       return
     }
+    voice.cancel()
     setBusy(true)
     setError(null)
     try {
@@ -69,21 +72,25 @@ export default function NewTaskForm({ onClose }: { onClose: () => void }) {
             options={boot.models.map((m) => ({ value: m, label: m }))}
           />
           <FieldLabel htmlFor={`${uid}-message`}>Message</FieldLabel>
-          <textarea
-            id={`${uid}-message`}
-            rows={5}
-            value={message}
-            disabled={busy}
-            placeholder="What should the AI user do?"
-            onChange={(e) => setMessage(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault()
-                void submit()
-              }
-            }}
-            style={textarea}
-          />
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+            <textarea
+              id={`${uid}-message`}
+              rows={5}
+              value={message}
+              disabled={busy}
+              placeholder="What should the AI user do?"
+              onChange={(e) => setMessage(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault()
+                  void submit()
+                }
+              }}
+              style={{ ...textarea, flex: '1 1 0', minWidth: 0 }}
+            />
+            <MicButton voice={voice} disabled={busy} />
+          </div>
+          {voice.error && <ErrorText>{voice.error}</ErrorText>}
           {error && (
             <ErrorText>{error}</ErrorText>
           )}

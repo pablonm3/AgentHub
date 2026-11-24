@@ -4,6 +4,7 @@ import { repoWebUrl } from './lib/format'
 import { applyTicketDetail, notify, refresh, useAppState } from './store'
 import { color, font, input, textarea } from './theme'
 import { Button, ErrorText, FieldLabel, Select } from './ui'
+import { MicButton, useDictation } from './voice'
 
 const NEW_PROJECT = '__new__'
 const NO_PROJECT = '__none__'
@@ -29,6 +30,7 @@ export default function AddTicketForm({ stageId, onClose }: { stageId: string; o
   const [busy, setBusy] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const [newProjectError, setNewProjectError] = useState<NewProjectError | null>(null)
+  const voice = useDictation(setDescription)
 
   if (!boot) return null
   const isNew = project === NEW_PROJECT
@@ -55,6 +57,7 @@ export default function AddTicketForm({ stageId, onClose }: { stageId: string; o
     } else {
       body = { ...base, project: project === NO_PROJECT ? null : project }
     }
+    voice.cancel()
     setBusy(true)
     try {
       const detail = await api.createTicket(body)
@@ -100,15 +103,19 @@ export default function AddTicketForm({ stageId, onClose }: { stageId: string; o
         onChange={(e) => setTitle(e.target.value)}
         style={{ ...input, height: 44 }}
       />
-      <textarea
-        aria-label="Description"
-        placeholder="Description (optional)"
-        rows={3}
-        value={description}
-        disabled={busy}
-        onChange={(e) => setDescription(e.target.value)}
-        style={textarea}
-      />
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+        <textarea
+          aria-label="Description"
+          placeholder="Description (optional)"
+          rows={3}
+          value={description}
+          disabled={busy}
+          onChange={(e) => setDescription(e.target.value)}
+          style={{ ...textarea, flex: '1 1 0', minWidth: 0 }}
+        />
+        <MicButton voice={voice} disabled={busy} />
+      </div>
+      {voice.error && <ErrorText>{voice.error}</ErrorText>}
       <FieldLabel htmlFor={`${uid}-assignee`}>Assignee</FieldLabel>
       <Select
         id={`${uid}-assignee`}

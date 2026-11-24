@@ -18,7 +18,8 @@ import {
   userName,
 } from './store'
 import { color, font, sectionHeading, textarea } from './theme'
-import { Avatar, Button, CloseButton, Dialog, EditableTitle, Markdown, Select, StatusPill, Timer, TokenCounts } from './ui'
+import { Avatar, Button, CloseButton, Dialog, EditableTitle, ErrorText, Markdown, Select, StatusPill, Timer, TokenCounts } from './ui'
+import { MicButton, useDictation } from './voice'
 
 export default function TicketDialog() {
   const s = useAppState()
@@ -187,8 +188,10 @@ function Description({ text, onSave }: { text: string; onSave: (text: string) =>
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(text)
   const [busy, setBusy] = useState(false)
+  const voice = useDictation(setDraft)
 
   const save = async () => {
+    voice.cancel()
     setBusy(true)
     try {
       await onSave(draft.trim())
@@ -220,24 +223,28 @@ function Description({ text, onSave }: { text: string; onSave: (text: string) =>
       </div>
       {editing ? (
         <>
-          <textarea
-            aria-label="Description"
-            rows={6}
-            autoFocus
-            value={draft}
-            disabled={busy}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') {
-                e.stopPropagation()
-                setEditing(false)
-              } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault()
-                void save()
-              }
-            }}
-            style={textarea}
-          />
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+            <textarea
+              aria-label="Description"
+              rows={6}
+              autoFocus
+              value={draft}
+              disabled={busy}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  e.stopPropagation()
+                  setEditing(false)
+                } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault()
+                  void save()
+                }
+              }}
+              style={{ ...textarea, flex: '1 1 0', minWidth: 0 }}
+            />
+            <MicButton voice={voice} disabled={busy} />
+          </div>
+          {voice.error && <ErrorText>{voice.error}</ErrorText>}
           <div style={{ display: 'flex', gap: 8 }}>
             <Button kind="primary" onClick={() => void save()} disabled={busy}>
               {busy ? 'Saving…' : 'Save'}

@@ -16,6 +16,7 @@ import {
 } from './store'
 import { dark, font } from './theme'
 import { Avatar, Button, CloseButton, Dialog, EditableTitle, Markdown, Select, StatusPill, Timer, TokenCounts } from './ui'
+import { MicButton, useDictation } from './voice'
 
 /** One task's chat, opened from the Tasks page or from a ticket's Tasks block. */
 export default function TaskDialog() {
@@ -333,6 +334,7 @@ function MessageBox({ task }: { task: Task }) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const voice = useDictation(setText)
 
   if (task.status === 'archived') {
     return (
@@ -345,6 +347,7 @@ function MessageBox({ task }: { task: Task }) {
   const send = async () => {
     const body = text.trim()
     if (!body || busy) return
+    voice.cancel()
     setBusy(true)
     setError(null)
     try {
@@ -398,10 +401,16 @@ function MessageBox({ task }: { task: Task }) {
             resize: 'vertical',
           }}
         />
+        <MicButton voice={voice} disabled={busy} darkMode />
         <Button kind="primary" onClick={() => void send()} disabled={busy || !text.trim()} style={{ minHeight: 44 }}>
           {busy ? 'Sending…' : 'Send'}
         </Button>
       </div>
+      {voice.error && (
+        <p role="alert" style={{ margin: 0, color: dark.error, fontSize: 13 }}>
+          {voice.error}
+        </p>
+      )}
       {error && (
         <p role="alert" style={{ margin: 0, color: dark.error, fontSize: 13 }}>
           {error}
