@@ -30,7 +30,8 @@ the run's gates reach Pablo as comments.
 ## Install
 
 Needs Python 3.11+, `uv`, Node 22 with npm, `git`, and the `claude` CLI logged in on this machine
-(`claude auth login`). "New project" without a repo URL also needs `gh` logged in on `github.com`.
+(`claude auth login`). `gh` logged in on `github.com` is needed only to let "New project" create a
+repository; without it the form asks for the URL of an existing repository and says why.
 
 ```bash
 git clone --recurse-submodules <this repo's URL>   # or, in a clone: git submodule update --init
@@ -66,6 +67,9 @@ a temp data folder and a temp clone of `private/`, all deleted on Ctrl+C:
 uv run python -m agenthub.tests.serve_fake --port 8799
 ```
 
+`--gh logged-out` or `--gh missing` starts it with a fake `gh` that is not logged in or not
+installed, to see the "New project" form of a machine that cannot create a repository.
+
 ## Data
 
 Everything the app writes is under `data/` (`AGENTHUB_DATA_DIR` moves it). To start over, stop the
@@ -73,7 +77,9 @@ server and delete `data/agenthub.db`, `data/tasks/`, `data/reports/` and `data/o
 
 Not undone by a reset: a project registered with "New project" stays in `private/harness.yaml`, and
 a "New project" without a repo URL creates a **private GitHub repository** of that name on the
-account `gh` is logged in with. AgentHub never deletes a repository; delete it on GitHub by hand.
+account `gh` is logged in with. A repository given by URL may be empty: AgentHub then pushes its
+first commit, a `README.md` naming the project, on `main`. AgentHub never deletes a repository or
+that commit; delete them on GitHub by hand.
 
 ## Observability
 

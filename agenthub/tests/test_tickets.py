@@ -2,6 +2,8 @@
 
 import threading
 
+import pytest
+
 from agenthub.tests.conftest import wait_for
 
 
@@ -84,6 +86,75 @@ def test_failed_registration_creates_no_ticket_and_no_task(app, env):
     assert "already exists" in out["message"]
     assert app.get("/api/tickets")["tickets"] == [] and app.get("/api/tasks")["tasks"] == []
     assert "taken" not in [p["name"] for p in app.hub.projects.list_projects()]
+
+
+def _new_project_body(name, repo_url=None):
+    new_project = {"name": name, **({"repo_url": repo_url} if repo_url else {})}
+    return {"title": "x", "description": "", "stage": "backlog", "assignee_id": "engineer", "model": "opus",
+            "new_project": new_project}
+
+
+def _nothing_created(app, name):
+    return (app.get("/api/tickets")["tickets"] == [] and app.get("/api/tasks")["tasks"] == []
+            and name not in [p["name"] for p in app.get("/api/bootstrap")["projects"]])
+
+
+def _without_gh(app, tmp_path):
+    app.config.gh_bin = str(tmp_path / "no-gh" / "gh")
+
+
+def test_new_project_with_an_empty_repo_is_registered_on_main(app, monkeypatch, tmp_path):
+    from agenthub import projects as projects_module
+    from agenthub.tests.serve_fake import make_empty_repo
+
+    remote = make_empty_repo(tmp_path / "empty.git")
+    monkeypatch.setattr(projects_module, "check_repo_url", lambda url: url)
+    t = app.ticket("Empty", new_project={"name": "empty", "repo_url": str(remote)})
+    assert t["project"] == "empty"
+    listed = {p["name"]: p["default_base"] for p in app.get("/api/bootstrap")["projects"]}
+    assert listed["empty"] == "main"
+
+
+def test_a_failed_first_push_creates_no_ticket_and_no_task(app, monkeypatch, tmp_path):
+    from agenthub import projects as projects_module
+    from agenthub.tests.serve_fake import make_empty_repo
+
+    remote = make_empty_repo(tmp_path / "declined.git")
+    hook = remote / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\nexit 1\n")
+    hook.chmod(0o755)
+    monkeypatch.setattr(projects_module, "check_repo_url", lambda url: url)
+    out = app.post("/api/tickets", _new_project_body("declined", str(remote)), status=422)
+    assert "first commit could not be pushed" in out["message"] and str(remote) in out["message"]
+    assert _nothing_created(app, "declined")
+
+
+@pytest.mark.parametrize("setup, expected", [
+    ("ok", {"can_create": True, "reason": None}),
+    ("missing", {"can_create": False, "reason": "not_installed"}),
+    ("not_logged_in", {"can_create": False, "reason": "not_logged_in"}),
+    ("auth_broken", {"can_create": False, "reason": "unknown"}),
+])
+def test_bootstrap_says_whether_this_machine_can_create_a_github_repo(app, env, tmp_path, setup, expected):
+    if setup == "missing":
+        _without_gh(app, tmp_path)
+    elif setup != "ok":
+        env.gh_scenario(**{setup: True})
+    b = app.get("/api/bootstrap")
+    assert b["github"] == expected
+    assert {"users", "stages", "models", "default_model", "projects", "login", "server_time"} <= set(b)
+
+
+@pytest.mark.parametrize("setup, text", [("missing", "not installed"), ("not_logged_in", "not logged in")])
+def test_new_project_without_url_is_refused_when_gh_cannot_create(app, env, tmp_path, setup, text):
+    if setup == "missing":
+        _without_gh(app, tmp_path)
+    else:
+        env.gh_scenario(not_logged_in=True)
+    out = app.post("/api/tickets", _new_project_body("nogh"), status=502)
+    assert text in out["message"] and "enter a repo URL" in out["message"]
+    assert not [c for c in env.gh_log() if c["argv"][:2] == ["repo", "create"]]
+    assert _nothing_created(app, "nogh")
 
 
 def test_first_prompt_states_the_project_or_its_absence(app, env):

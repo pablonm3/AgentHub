@@ -1,7 +1,8 @@
-import { useId, useState, type FormEvent } from 'react'
-import { api, errorBody, errorMessage, type NewTicket } from './api'
+import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react'
+import { api, errorBody, errorMessage, type GithubStatus, type NewTicket } from './api'
 import { repoWebUrl } from './lib/format'
-import { applyTicketDetail, notify, refresh, useAppState } from './store'
+import { canCreateRepo, newProjectInput } from './lib/newProject'
+import { applyTicketDetail, loadBoot, notify, refresh, useAppState } from './store'
 import { color, font, input, textarea } from './theme'
 import { Button, ErrorText, FieldLabel, Select } from './ui'
 import { MicButton, useDictation } from './voice'
@@ -9,7 +10,7 @@ import { MicButton, useDictation } from './voice'
 const NEW_PROJECT = '__new__'
 const NO_PROJECT = '__none__'
 
-interface NewProjectError {
+export interface NewProjectError {
   message: string
   createdRepo: string | null
 }
@@ -32,6 +33,11 @@ export default function AddTicketForm({ stageId, onClose }: { stageId: string; o
   const [newProjectError, setNewProjectError] = useState<NewProjectError | null>(null)
   const voice = useDictation(setDescription)
 
+  // What `gh` can do may have changed since the last poll, which stops while the tab is hidden.
+  useEffect(() => {
+    void loadBoot()
+  }, [])
+
   if (!boot) return null
   const isNew = project === NEW_PROJECT
 
@@ -47,13 +53,12 @@ export default function AddTicketForm({ stageId, onClose }: { stageId: string; o
     }
     let body: NewTicket
     if (isNew) {
-      const name = projectName.trim()
-      if (!name) {
-        setNewProjectError({ message: 'Give the new project a name.', createdRepo: null })
+      const checked = newProjectInput(projectName, repoUrl, canCreateRepo(boot.github))
+      if (!checked.ok) {
+        setNewProjectError({ message: checked.error, createdRepo: null })
         return
       }
-      const url = repoUrl.trim()
-      body = { ...base, new_project: url ? { name, repo_url: url } : { name } }
+      body = { ...base, new_project: checked.new_project }
     } else {
       body = { ...base, project: project === NO_PROJECT ? null : project }
     }
@@ -82,7 +87,6 @@ export default function AddTicketForm({ stageId, onClose }: { stageId: string; o
     { value: NEW_PROJECT, label: 'New project' },
     { value: NO_PROJECT, label: 'No project' },
   ]
-  const shownName = projectName.trim() || 'the project name'
 
   return (
     <form
@@ -144,56 +148,15 @@ export default function AddTicketForm({ stageId, onClose }: { stageId: string; o
         options={options}
       />
       {isNew && (
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 8,
-            padding: 10,
-            borderRadius: 10,
-            background: color.surface,
-            border: `1px solid ${color.line}`,
-          }}
-        >
-          <FieldLabel htmlFor={`${uid}-pname`}>Project name</FieldLabel>
-          <input
-            id={`${uid}-pname`}
-            type="text"
-            autoComplete="off"
-            value={projectName}
-            disabled={busy}
-            onChange={(e) => setProjectName(e.target.value)}
-            style={input}
-          />
-          <FieldLabel htmlFor={`${uid}-purl`}>Repo URL (optional)</FieldLabel>
-          <input
-            id={`${uid}-purl`}
-            type="text"
-            autoComplete="off"
-            placeholder="git@github.com:owner/repo.git"
-            value={repoUrl}
-            disabled={busy}
-            onChange={(e) => setRepoUrl(e.target.value)}
-            style={input}
-          />
-          <p style={{ margin: 0, color: color.muted, fontSize: 12, lineHeight: '17px' }}>
-            Leave the URL empty to create a private GitHub repository named <strong>{shownName}</strong> on the
-            account <code style={{ fontFamily: font.mono }}>gh</code> is logged in with.
-          </p>
-          {newProjectError && (
-            <div role="alert" style={{ color: color.errorInk, fontSize: 13, lineHeight: '18px', overflowWrap: 'anywhere' }}>
-              <p style={{ margin: 0 }}>{newProjectError.message}</p>
-              {newProjectError.createdRepo && (
-                <p style={{ margin: '4px 0 0' }}>
-                  Repository created:{' '}
-                  <a href={repoWebUrl(newProjectError.createdRepo) ?? newProjectError.createdRepo} target="_blank" rel="noopener noreferrer">
-                    {newProjectError.createdRepo}
-                  </a>
-                </p>
-              )}
-            </div>
-          )}
-        </div>
+        <NewProjectFields
+          github={boot.github}
+          name={projectName}
+          repoUrl={repoUrl}
+          busy={busy}
+          error={newProjectError}
+          onName={setProjectName}
+          onRepoUrl={setRepoUrl}
+        />
       )}
       {formError && (
         <ErrorText>{formError}</ErrorText>
@@ -207,5 +170,110 @@ export default function AddTicketForm({ stageId, onClose }: { stageId: string; o
         </Button>
       </div>
     </form>
+  )
+}
+
+const gh = <code style={{ fontFamily: font.mono }}>gh</code>
+const ghLogin = <code style={{ fontFamily: font.mono }}>gh auth login</code>
+
+/** Under the repo URL: what an empty URL does, or why this machine cannot create a repository. */
+function repoUrlHint(github: GithubStatus | undefined, shownName: string): ReactNode {
+  if (canCreateRepo(github)) {
+    return (
+      <>
+        Leave the URL empty to create a private GitHub repository named <strong>{shownName}</strong> on the
+        account {gh} is logged in with.
+      </>
+    )
+  }
+  if (github?.reason === 'not_installed') {
+    return (
+      <>
+        {gh} is not installed on the machine that runs AgentHub. Installing it and running {ghLogin} there lets
+        this form create repositories (restart AgentHub if the form still says this).
+      </>
+    )
+  }
+  if (github?.reason === 'not_logged_in') {
+    return (
+      <>
+        {gh} is not logged in on the machine that runs AgentHub. Running {ghLogin} there lets this form create
+        repositories.
+      </>
+    )
+  }
+  return <>{gh} did not answer on the machine that runs AgentHub, so this form cannot create a repository right now.</>
+}
+
+/** The "New project" block: name, repo URL (required when this machine cannot create a repository), hint, error. */
+export function NewProjectFields({
+  github,
+  name,
+  repoUrl,
+  busy,
+  error,
+  onName,
+  onRepoUrl,
+}: {
+  github: GithubStatus | undefined
+  name: string
+  repoUrl: string
+  busy: boolean
+  error: NewProjectError | null
+  onName: (v: string) => void
+  onRepoUrl: (v: string) => void
+}) {
+  const uid = useId()
+  const urlRequired = !canCreateRepo(github)
+  const shownName = name.trim() || 'the project name'
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        padding: 10,
+        borderRadius: 10,
+        background: color.surface,
+        border: `1px solid ${color.line}`,
+      }}
+    >
+      <FieldLabel htmlFor={`${uid}-pname`}>Project name</FieldLabel>
+      <input
+        id={`${uid}-pname`}
+        type="text"
+        autoComplete="off"
+        value={name}
+        disabled={busy}
+        onChange={(e) => onName(e.target.value)}
+        style={input}
+      />
+      <FieldLabel htmlFor={`${uid}-purl`}>{urlRequired ? 'Repo URL' : 'Repo URL (optional)'}</FieldLabel>
+      <input
+        id={`${uid}-purl`}
+        type="text"
+        autoComplete="off"
+        placeholder="git@github.com:owner/repo.git"
+        aria-required={urlRequired || undefined}
+        value={repoUrl}
+        disabled={busy}
+        onChange={(e) => onRepoUrl(e.target.value)}
+        style={input}
+      />
+      <p style={{ margin: 0, color: color.muted, fontSize: 12, lineHeight: '17px' }}>{repoUrlHint(github, shownName)}</p>
+      {error && (
+        <div role="alert" style={{ color: color.errorInk, fontSize: 13, lineHeight: '18px', overflowWrap: 'anywhere' }}>
+          <p style={{ margin: 0 }}>{error.message}</p>
+          {error.createdRepo && (
+            <p style={{ margin: '4px 0 0' }}>
+              Repository created:{' '}
+              <a href={repoWebUrl(error.createdRepo) ?? error.createdRepo} target="_blank" rel="noopener noreferrer">
+                {error.createdRepo}
+              </a>
+            </p>
+          )}
+        </div>
+      )}
+    </div>
   )
 }

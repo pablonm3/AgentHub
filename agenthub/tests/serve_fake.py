@@ -1,7 +1,11 @@
 """Fake mode: the app on a temp data folder and a temp clone of the private folder, with fake
 `claude` and fake `gh`, so nothing reaches Claude, GitHub or `AgentHub-private`.
 
-    uv run python -m agenthub.tests.serve_fake --port 8799
+    uv run python -m agenthub.tests.serve_fake --port 8799 [--gh ok|logged-out|missing]
+
+`--gh` sets what the fake `gh` can do: `ok` (logged in, the default), `logged-out` (installed, not
+logged in) or `missing` (not installed), so the "New project" form of a machine that cannot create
+a GitHub repository can be seen.
 
 The temp folder is deleted when the server stops. The pytest fixtures build their folders with
 `build_fake_environment` too.
@@ -10,6 +14,7 @@ The temp folder is deleted when the server stops. The pytest fixtures build thei
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import stat
@@ -21,6 +26,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 FAKE_CLAUDE = HERE / "fake_claude.py"
 FAKE_GH = HERE / "fake_gh.py"
+GH_STATES = ("ok", "logged-out", "missing")
 
 DEMO_AGENTS_MD = """# demo — instructions for agents
 
@@ -73,6 +79,12 @@ def make_bare_repo(path: Path, files: dict[str, str], branch: str = "main") -> P
     _git("commit", "-q", "-m", "initial", cwd=work)
     _git("clone", "-q", "--bare", str(work), str(path))
     shutil.rmtree(work)
+    return path
+
+
+def make_empty_repo(path: Path, head: str = "main") -> Path:
+    """A bare repository with no refs at all, as GitHub makes one without a README."""
+    _git("init", "-q", "--bare", "-b", head, str(path))
     return path
 
 
@@ -138,10 +150,16 @@ def main() -> int:
     p = argparse.ArgumentParser(description="AgentHub in fake mode (fake claude, fake gh, temp data and private folders)")
     p.add_argument("--port", type=int, default=8799)
     p.add_argument("--private", default=str(REPO / "private"), help="private-folder checkout to clone (default: private/)")
+    p.add_argument("--gh", choices=GH_STATES, default="ok",
+                   help="what the fake gh can do: ok (logged in), logged-out, missing (not installed)")
     args = p.parse_args()
     base = Path(tempfile.mkdtemp(prefix="agenthub-fake-"))
     try:
         env = build_fake_environment(base, Path(args.private))
+        if args.gh == "logged-out":
+            (Path(env["AGENTHUB_FAKE_GH_DIR"]) / "scenario.json").write_text(json.dumps({"not_logged_in": True}))
+        elif args.gh == "missing":
+            env["AGENTHUB_GH_BIN"] = str(base / "no-gh" / "gh")
         os.environ.update(env)
         os.environ["AGENTHUB_PORT"] = str(args.port)
         import uvicorn

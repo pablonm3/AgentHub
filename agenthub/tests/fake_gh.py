@@ -5,9 +5,11 @@ Every call is appended to `$AGENTHUB_FAKE_GH_DIR/gh.log` (argv and GH_HOST).
 - `repo create <name> …` makes a bare repository with one README commit on `main` under
   `$AGENTHUB_FAKE_GH_DIR/repos/<name>.git` and prints a web URL for it;
 - `repo view <url> --json sshUrl,url` prints that repository's path as both URLs;
-- `config get git_protocol …` prints `ssh`.
+- `config get git_protocol …` prints `ssh`;
+- `auth status …` exits 0 with a "Logged in to github.com" line.
 Switches in `$AGENTHUB_FAKE_GH_DIR/scenario.json`: `name_taken`, `not_logged_in` (the creation fails
-with gh's message), `unclonable` (the URLs point at nothing).
+with gh's message and `auth status` exits 1), `unclonable` (the URLs point at nothing),
+`auth_broken` (`auth status` exits 3), `auth_hangs` (`auth status` sleeps 5 s before answering).
 """
 
 import json
@@ -15,6 +17,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 OWNER = "fake-owner"
@@ -56,6 +59,17 @@ def main() -> int:
         return 0
     if argv[:3] == ["config", "get", "git_protocol"]:
         print("ssh")
+        return 0
+    if argv[:2] == ["auth", "status"]:
+        if sc.get("auth_hangs"):
+            time.sleep(5)
+        if sc.get("auth_broken"):
+            print("fake gh: unexpected error", file=sys.stderr)
+            return 3
+        if sc.get("not_logged_in"):
+            print("You are not logged into any GitHub hosts. To log in, run: gh auth login", file=sys.stderr)
+            return 1
+        print(f"github.com\n  ✓ Logged in to github.com account {OWNER} (keyring)")
         return 0
     print(f"fake gh: unsupported command {' '.join(argv)}", file=sys.stderr)
     return 2

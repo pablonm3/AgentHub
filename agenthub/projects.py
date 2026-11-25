@@ -1,8 +1,10 @@
 """Projects registered in the harness copy's manifest (`private/harness.yaml`), and new ones.
 
 A new project is registered with the copy's own `project_add`. Given a repo URL, that repository is
-used (AC39). Without one, a private GitHub repository named after the project is created first with
-the `gh` command this machine is logged in with (AC43). The app never deletes a repository.
+used (AC39); an empty one (no refs at all) first gets a commit on `main` holding only a README.md
+that names the project. Without a URL, a private GitHub repository named after the project is
+created first with the `gh` command this machine is logged in with (AC43), and only when
+`gh auth status` says it can. The app never deletes a repository, nor a commit it pushed.
 """
 
 from __future__ import annotations
@@ -14,8 +16,10 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from harness.config import ConfigError, dump_yaml, load_manifest, load_yaml
@@ -26,6 +30,17 @@ if TYPE_CHECKING:
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 SCP_LIKE_RE = re.compile(r"^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^\s]+$")  # user@host:path
+FIRST_BRANCH = "main"  # the branch an empty repository's first commit is pushed to
+FIRST_COMMIT_TIMEOUT_S = 60
+
+CANNOT_CREATE = {
+    "not_installed": "`gh` is not installed on this machine, so no GitHub repository can be created; "
+                     "enter a repo URL instead",
+    "not_logged_in": "`gh` is not logged in to github.com on this machine (run `gh auth login` there), "
+                     "so no GitHub repository can be created; enter a repo URL instead",
+    "unknown": "`gh` did not say whether it is logged in on this machine, so no GitHub repository "
+               "was created; enter a repo URL instead",
+}
 
 
 class ProjectError(Exception):
@@ -47,6 +62,10 @@ class ProjectError(Exception):
         )
 
 
+class NoBranchError(ProjectError):
+    """The repository answered, and its HEAD names no existing branch."""
+
+
 def check_repo_url(url: str) -> str:
     """Accept https://…, ssh://… and user@host:path; refuse local paths, file:// and other transports."""
     url = url.strip()
@@ -64,33 +83,88 @@ def _git_env() -> dict[str, str]:
     return env
 
 
-def default_branch(url: str) -> str:
-    """The repository's default branch, from `git ls-remote --symref`. Raises ProjectError."""
+def _gh_env() -> dict[str, str]:
+    return {**os.environ, "GH_HOST": "github.com", "GH_PROMPT_DISABLED": "1"}
+
+
+def _ls_remote(url: str, *patterns: str, symref: bool = False) -> str:
+    """Stdout of `git ls-remote` for `url`. Raises ProjectError when the repository does not answer."""
     try:
         r = subprocess.run(
-            ["git", "ls-remote", "--symref", "--", url, "HEAD"],
+            ["git", "ls-remote", *(["--symref"] if symref else []), "--", url, *patterns],
             capture_output=True, text=True, timeout=30, env=_git_env(), stdin=subprocess.DEVNULL,
         )
     except subprocess.TimeoutExpired:
         raise ProjectError(f"the repository {url} did not answer within 30 s")
     if r.returncode != 0:
-        raise ProjectError(f"the repository {url} cannot be reached: {(r.stderr or r.stdout).strip()[-300:]}")
-    for line in r.stdout.splitlines():
+        raise ProjectError(f"the repository {url} cannot be reached: {_tail(r)}")
+    return r.stdout
+
+
+def default_branch(url: str) -> str:
+    """The repository's default branch, from `git ls-remote --symref`. Raises ProjectError."""
+    for line in _ls_remote(url, "HEAD", symref=True).splitlines():
         m = re.match(r"^ref:\s+refs/heads/(\S+)\s+HEAD$", line.strip())
         if m:
             return m.group(1)
-    raise ProjectError(f"the repository {url} has no branch to start from")
+    raise NoBranchError(f"the repository {url} has no branch to start from")
+
+
+def is_empty(url: str) -> bool:
+    """True when the repository has no refs at all. Raises ProjectError."""
+    return not _ls_remote(url).strip()
+
+
+def push_first_commit(url: str, name: str) -> None:
+    """Give an empty repository its first commit: a README.md naming the project, on `main`. Raises ProjectError.
+
+    The commit carries this machine's git identity. The push is never forced, so a repository that
+    got a ref in the meantime refuses it.
+    """
+    with tempfile.TemporaryDirectory(prefix="agenthub-first-commit-") as work:
+        Path(work, "README.md").write_text(f"# {name}\n")
+        for args in (
+            ["init", "-q"],
+            ["add", "README.md"],
+            ["commit", "-q", "-m", "Initial commit"],
+            ["push", "-q", "--", url, f"HEAD:refs/heads/{FIRST_BRANCH}"],
+        ):
+            reason = _git_step_failure(work, args)
+            if reason:
+                raise ProjectError(f"the first commit could not be pushed to the repository {url}: {reason}")
+
+
+def _git_step_failure(cwd: str, args: list[str]) -> str | None:
+    """Run `git <args>` in `cwd`; None when it worked, else git's reason."""
+    try:
+        r = subprocess.run(
+            ["git", *args], cwd=cwd, capture_output=True, text=True,
+            timeout=FIRST_COMMIT_TIMEOUT_S, env=_git_env(), stdin=subprocess.DEVNULL,
+        )
+    except subprocess.TimeoutExpired:
+        return f"`git {args[0]}` did not finish within {FIRST_COMMIT_TIMEOUT_S} s"
+    if r.returncode == 0:
+        return None
+    return _tail(r) or f"`git {args[0]}` exited {r.returncode}"
+
+
+def _tail(r: subprocess.CompletedProcess) -> str:
+    """The end of what a failed git command said: its reason."""
+    return (r.stderr or r.stdout).strip()[-300:]
 
 
 class Projects:
     branch_retries = 5      # a repository can take a moment to answer after its creation
     branch_retry_wait_s = 2.0
+    github_cache_s = 30.0   # how long an answer of `gh auth status` is kept
+    github_timeout_s = 10.0
 
     def __init__(self, hub: "Hub"):
         self.hub = hub
         self.config = hub.config
         self.layout = hub.config.layout()
         self._lock = threading.Lock()
+        self._github: tuple[float, dict] | None = None
 
     # ------------------------------------------------------------ reading
     def list_projects(self) -> list[dict]:
@@ -126,8 +200,9 @@ class Projects:
             created_web_url = None
             if repo_url:
                 repo = check_repo_url(repo_url)
-                base = default_branch(repo)
+                base = self._base_of_given_repo(name, repo)
             else:
+                self._require_github()
                 repo, created_web_url = self._create_github_repo(name)
                 try:
                     base = self._wait_for_branch(repo)
@@ -150,6 +225,16 @@ class Projects:
         if any(p["name"].lower() == name.lower() for p in self.list_projects()):
             raise ProjectError(f"a project named {name} is already registered", 409)
 
+    def _base_of_given_repo(self, name: str, repo: str) -> str:
+        """The branch the project starts from; an empty repository first gets a README commit on `main`."""
+        try:
+            return default_branch(repo)
+        except NoBranchError:
+            if not is_empty(repo):
+                raise  # it has branches, but HEAD names a missing one: nothing is pushed to it
+        push_first_commit(repo, name)
+        return FIRST_BRANCH
+
     def _wait_for_branch(self, url: str) -> str:
         for attempt in range(self.branch_retries):
             try:
@@ -171,12 +256,42 @@ class Projects:
         shutil.rmtree(self.layout.base_clone(name), ignore_errors=True)
 
     # ------------------------------------------------------------ GitHub
+    def github_status(self, fresh: bool = False) -> dict:
+        """Whether `gh` on this machine can create a GitHub repository, and why not. Never raises."""
+        if not fresh and self._github and time.monotonic() - self._github[0] < self.github_cache_s:
+            return self._github[1]
+        status = self._read_github()
+        self._github = (time.monotonic(), status)
+        return status
+
+    def _read_github(self) -> dict:
+        # Not `--json`: with it `gh auth status` exits 0 whatever the login state.
+        try:
+            r = subprocess.run(
+                [self.config.gh_bin, "auth", "status", "--hostname", "github.com"],
+                capture_output=True, text=True, timeout=self.github_timeout_s, env=_gh_env(), stdin=subprocess.DEVNULL,
+            )
+        except FileNotFoundError:
+            return _cannot_create("not_installed")
+        except (subprocess.TimeoutExpired, OSError):
+            return _cannot_create("unknown")
+        if r.returncode == 0:
+            return {"can_create": True, "reason": None}
+        # gh exits 1 for a failed command and 4 for "requires authentication".
+        return _cannot_create("not_logged_in" if r.returncode in (1, 4) else "unknown")
+
+    def _require_github(self) -> None:
+        """Refuse a create without URL when `gh` cannot make the repository: the form's knowledge can be stale."""
+        status = self.github_status(fresh=True)
+        if not status["can_create"]:
+            raise ProjectError(CANNOT_CREATE[status["reason"]], 502)
+
     def create_github_repo(self, name: str) -> str:
         """Create a private GitHub repository for the project; returns its clone URL."""
         return self._create_github_repo(name)[0]
 
     def _create_github_repo(self, name: str) -> tuple[str, str]:
-        env = {**os.environ, "GH_HOST": "github.com", "GH_PROMPT_DISABLED": "1"}
+        env = _gh_env()
         made = self._gh(
             ["repo", "create", name, "--private", "--add-readme", "--description", f"{name} (created by AgentHub)"],
             env, limit=60, creating=True,
@@ -199,7 +314,7 @@ class Projects:
                 [self.config.gh_bin, *args], capture_output=True, text=True, timeout=limit, env=env, stdin=subprocess.DEVNULL,
             )
         except FileNotFoundError:
-            raise ProjectError("`gh` is not installed on this machine, so no GitHub repository can be created; enter a repo URL instead", 502)
+            raise ProjectError(CANNOT_CREATE["not_installed"], 502)
         except subprocess.TimeoutExpired:
             extra = " The repository may exist on GitHub all the same." if creating else ""
             raise ProjectError(f"`gh {args[0]} {args[1]}` did not answer within {int(limit)} s.{extra}", 502)
@@ -209,6 +324,10 @@ class Projects:
                 message += " Enter that repository's URL in the form to register it."
             raise ProjectError(message, 502)
         return r
+
+
+def _cannot_create(reason: str) -> dict:
+    return {"can_create": False, "reason": reason}
 
 
 def _reason(e: BaseException) -> str:

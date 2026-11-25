@@ -1,4 +1,5 @@
-"""Registered projects and new ones, with a given repo URL (AC39) or a created private repo (AC43)."""
+"""Registered projects and new ones, with a given repo URL (AC39) or a created private repo (AC43),
+an empty repository's first commit, and whether `gh` can create a repository."""
 
 import subprocess
 
@@ -6,8 +7,8 @@ import pytest
 import yaml
 
 from agenthub import projects as projects_module
-from agenthub.projects import ProjectError, check_repo_url
-from agenthub.tests.serve_fake import make_bare_repo
+from agenthub.projects import ProjectError, Projects, check_repo_url
+from agenthub.tests.serve_fake import make_bare_repo, make_empty_repo
 
 
 def _manifest(env):
@@ -18,6 +19,23 @@ def _remote_files(env):
     out = subprocess.run(["git", "ls-tree", "-r", "--name-only", "main"], cwd=env.private_remote,
                          capture_output=True, text=True, check=True).stdout
     return out.splitlines()
+
+
+def _git_out(repo, *args):
+    return subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, check=True).stdout.strip()
+
+
+def _refs(repo):
+    return _git_out(repo, "for-each-ref", "--format=%(refname) %(objectname)")
+
+
+def _commit_count(repo, ref="main"):
+    return int(_git_out(repo, "rev-list", "--count", ref))
+
+
+def _without_gh(app, tmp_path):
+    """`gh` is not installed: the command it is started with does not exist."""
+    app.config.gh_bin = str(tmp_path / "no-gh" / "gh")
 
 
 def _state(app, env, name):
@@ -47,7 +65,10 @@ def test_check_repo_url_refuses_other_forms(url):
         check_repo_url(url)
 
 
-def test_register_with_a_url(app, env, monkeypatch, tmp_path):
+@pytest.mark.parametrize("gh", ["fake", "missing"])
+def test_register_with_a_url(app, env, monkeypatch, tmp_path, gh):
+    if gh == "missing":
+        _without_gh(app, tmp_path)
     remote = make_bare_repo(tmp_path / "given.git", {"README.md": "x"}, branch="trunk")
     monkeypatch.setattr(projects_module, "check_repo_url", lambda url: url)
     project, warning = app.hub.projects.register("demo3", str(remote))
@@ -56,7 +77,72 @@ def test_register_with_a_url(app, env, monkeypatch, tmp_path):
     assert _state(app, env, "demo3") == {"entry": True, "agentsmd": True, "skills": True, "clone": True}
     assert "TODO(onboard)" in (env.private / "agentmds" / "demo3" / "AGENTS.md").read_text()
     assert "agentmds/demo3/AGENTS.md" in _remote_files(env)
+    assert _commit_count(remote, "trunk") == 1  # no commit added to a repository that has a branch
     assert env.gh_log() == []
+
+
+@pytest.mark.parametrize("gh", ["fake", "missing"])
+def test_an_empty_repo_gets_a_first_readme_commit_on_main(app, env, monkeypatch, tmp_path, gh):
+    if gh == "missing":
+        _without_gh(app, tmp_path)
+    remote = make_empty_repo(tmp_path / "empty.git")
+    monkeypatch.setattr(projects_module, "check_repo_url", lambda url: url)
+    project, warning = app.hub.projects.register("empty1", str(remote))
+    assert warning is None
+    assert project == {"name": "empty1", "default_base": "main", "repo": str(remote), "ready": False}
+    assert _commit_count(remote) == 1
+    assert _git_out(remote, "ls-tree", "-r", "--name-only", "main").splitlines() == ["README.md"]
+    assert "empty1" in _git_out(remote, "show", "main:README.md")
+    clone = app.config.layout().base_clone("empty1")
+    assert _git_out(clone, "rev-parse", "origin/main") == _git_out(remote, "rev-parse", "main")
+    assert env.gh_log() == []
+
+
+def test_a_failed_first_push_registers_nothing(app, env, monkeypatch, tmp_path):
+    remote = make_empty_repo(tmp_path / "declined.git")
+    hook = remote / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\nexit 1\n")
+    hook.chmod(0o755)
+    monkeypatch.setattr(projects_module, "check_repo_url", lambda url: url)
+    with pytest.raises(ProjectError) as e:
+        app.hub.projects.register("declined", str(remote))
+    assert str(remote) in e.value.message and "first commit could not be pushed" in e.value.message
+    assert "pre-receive hook declined" in e.value.message
+    assert _state(app, env, "declined") == {"entry": False, "agentsmd": False, "skills": False, "clone": False}
+    assert _refs(remote) == ""
+
+
+def test_a_repo_whose_head_names_a_missing_branch_is_refused_and_untouched(app, env, monkeypatch, tmp_path):
+    remote = make_bare_repo(tmp_path / "dangling.git", {"README.md": "x"}, branch="dev")
+    _git_out(remote, "symbolic-ref", "HEAD", "refs/heads/missing")
+    before = _refs(remote)
+    monkeypatch.setattr(projects_module, "check_repo_url", lambda url: url)
+    with pytest.raises(ProjectError) as e:
+        app.hub.projects.register("dangling", str(remote))
+    assert e.value.status == 422 and "has no branch to start from" in e.value.message
+    assert _refs(remote) == before
+    assert _state(app, env, "dangling") == {"entry": False, "agentsmd": False, "skills": False, "clone": False}
+
+
+def test_a_failed_registration_after_the_first_push_keeps_the_commit_and_a_retry_works(app, env, monkeypatch, tmp_path):
+    remote = make_empty_repo(tmp_path / "retry.git")
+    monkeypatch.setattr(projects_module, "check_repo_url", lambda url: url)
+    real_project_add = projects_module.project_add
+
+    def fail_clone(*args, **kwargs):
+        raise subprocess.CalledProcessError(128, ["git", "clone"])
+
+    monkeypatch.setattr(projects_module, "project_add", lambda layout, name, repo, base, no_chat=True: (
+        _write_entry(env, name, repo), fail_clone()))
+    with pytest.raises(ProjectError):
+        app.hub.projects.register("retry", str(remote))
+    assert _state(app, env, "retry") == {"entry": False, "agentsmd": False, "skills": False, "clone": False}
+    assert _commit_count(remote) == 1  # AgentHub never deletes what it pushed
+
+    monkeypatch.setattr(projects_module, "project_add", real_project_add)
+    project, _ = app.hub.projects.register("retry", str(remote))
+    assert project["default_base"] == "main"
+    assert _commit_count(remote) == 1
 
 
 def test_register_without_a_url_creates_a_private_github_repo(app, env):
@@ -103,6 +189,22 @@ def test_gh_refusals_are_502_with_its_message(app, env, switch, text):
     assert _state(app, env, "demo4") == {"entry": False, "agentsmd": False, "skills": False, "clone": False}
 
 
+@pytest.mark.parametrize("setup, text", [
+    ("missing", "not installed"), ("not_logged_in", "gh auth login"), ("auth_broken", "did not say"),
+])
+def test_a_create_without_url_is_refused_before_gh_repo_create(app, env, tmp_path, setup, text):
+    if setup == "missing":
+        _without_gh(app, tmp_path)
+    else:
+        env.gh_scenario(**{setup: True})
+    with pytest.raises(ProjectError) as e:
+        app.hub.projects.register("demo7")
+    assert e.value.status == 502 and text in e.value.message and "enter a repo URL" in e.value.message
+    assert not [c for c in env.gh_log() if c["argv"][:2] == ["repo", "create"]]
+    assert not (env.gh_dir / "repos").exists()
+    assert _state(app, env, "demo7") == {"entry": False, "agentsmd": False, "skills": False, "clone": False}
+
+
 def test_a_created_repo_that_cannot_be_cloned_is_kept_and_named(app, env):
     env.gh_scenario(unclonable=True)
     with pytest.raises(ProjectError) as e:
@@ -131,3 +233,50 @@ def _write_entry(env, name, repo):
     raw["projects"][name] = {"repo": repo, "default_base": "main"}
     path.write_text(yaml.safe_dump(raw))
     (env.private / "agentmds" / name).mkdir(parents=True)
+
+
+# ---------------------------------------------------------------- what `gh` can do
+def _gh_script(tmp_path, body):
+    script = tmp_path / "gh-script"
+    script.write_text(f"#!/bin/sh\n{body}\n")
+    script.chmod(0o755)
+    return str(script)
+
+
+@pytest.mark.parametrize("setup, expected", [
+    ("ok", {"can_create": True, "reason": None}),
+    ("missing", {"can_create": False, "reason": "not_installed"}),
+    ("not_logged_in", {"can_create": False, "reason": "not_logged_in"}),
+    ("exit_4", {"can_create": False, "reason": "not_logged_in"}),
+    ("auth_broken", {"can_create": False, "reason": "unknown"}),
+    ("auth_hangs", {"can_create": False, "reason": "unknown"}),
+    ("not_executable", {"can_create": False, "reason": "unknown"}),
+])
+def test_github_status_maps_what_gh_auth_status_does(app, env, monkeypatch, tmp_path, setup, expected):
+    if setup == "auth_hangs":
+        monkeypatch.setattr(Projects, "github_timeout_s", 0.3)  # the fake sleeps 5 s
+    if setup == "missing":
+        _without_gh(app, tmp_path)
+    elif setup == "exit_4":
+        app.config.gh_bin = _gh_script(tmp_path, "exit 4")
+    elif setup == "not_executable":
+        app.config.gh_bin = _gh_script(tmp_path, "exit 0")
+        (tmp_path / "gh-script").chmod(0o644)
+    elif setup != "ok":
+        env.gh_scenario(**{setup: True})
+    assert app.hub.projects.github_status() == expected
+
+
+def test_github_status_is_kept_for_a_while_and_then_read_again(app, env, monkeypatch):
+    def auth_calls():
+        return [c for c in env.gh_log() if c["argv"][:2] == ["auth", "status"]]
+
+    assert app.hub.projects.github_status()["can_create"] is True
+    assert app.hub.projects.github_status()["can_create"] is True
+    assert len(auth_calls()) == 1
+    assert all(c["GH_HOST"] == "github.com" for c in auth_calls())
+
+    monkeypatch.setattr(Projects, "github_cache_s", 0.0)
+    env.gh_scenario(not_logged_in=True)
+    assert app.hub.projects.github_status() == {"can_create": False, "reason": "not_logged_in"}
+    assert len(auth_calls()) == 2

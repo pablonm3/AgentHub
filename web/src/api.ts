@@ -33,6 +33,15 @@ export interface Login {
   detail: string | null
 }
 
+/** Why this machine cannot create a GitHub repository. */
+export type GithubBlock = 'not_installed' | 'not_logged_in' | 'unknown'
+
+/** Whether `gh` on the machine that runs AgentHub can create a GitHub repository. */
+export interface GithubStatus {
+  can_create: boolean
+  reason: GithubBlock | null
+}
+
 export type TaskStatus = 'running' | 'waiting_on_user' | 'done' | 'archived'
 export type TaskOrigin = 'assignment' | 'mention' | 'manual'
 
@@ -131,6 +140,7 @@ export interface Bootstrap {
   default_model: string
   projects: Project[]
   login: Login
+  github: GithubStatus
   server_time: string | number
 }
 

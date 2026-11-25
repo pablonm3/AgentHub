@@ -4,7 +4,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import ActivityPage from './ActivityPage'
-import AddTicketForm from './AddTicketForm'
+import AddTicketForm, { NewProjectFields } from './AddTicketForm'
 import App from './App'
 import Board from './Board'
 import NewTaskForm from './NewTaskForm'
@@ -12,7 +12,7 @@ import SettingsPage from './SettingsPage'
 import TaskDialog from './TaskDialog'
 import TasksPage from './TasksPage'
 import TicketDialog from './TicketDialog'
-import type { Bootstrap, Comment, Task, TaskDetail, Ticket, TicketDetail } from './api'
+import type { Bootstrap, Comment, GithubStatus, Task, TaskDetail, Ticket, TicketDetail } from './api'
 import {
   getState,
   loadActivity,
@@ -45,6 +45,7 @@ const boot: Bootstrap = {
   default_model: 'opus',
   projects: [{ name: 'AgentHub', default_base: 'main', repo: 'git@github.com:owner/AgentHub.git', ready: true }],
   login: { logged_in: true, method: 'claude.ai', subscription: 'max', expires_at: null, detail: 'ok' },
+  github: { can_create: true, reason: null },
   server_time: new Date(NOW).toISOString(),
 }
 
@@ -256,5 +257,62 @@ describe('voice input controls', () => {
 
   it('shows no microphone control when the browser offers none', async () => {
     for (const html of await fields()) expect(html).not.toContain('voice input')
+  })
+})
+
+describe('the New project block', () => {
+  const render = (github: GithubStatus | undefined, error: { message: string; createdRepo: string | null } | null = null) =>
+    renderToStaticMarkup(
+      <NewProjectFields
+        github={github}
+        name="proj"
+        repoUrl=""
+        busy={false}
+        error={error}
+        onName={() => {}}
+        onRepoUrl={() => {}}
+      />,
+    )
+  const labels = (html: string) => (html.match(/<label[^>]*>.*?<\/label>/g) ?? []).map((l) => text(l).trim())
+
+  it('offers to create the repository when this machine can', () => {
+    const html = render({ can_create: true, reason: null })
+    expect(labels(html)).toEqual(['Project name', 'Repo URL (optional)'])
+    expect(text(html)).toContain('Leave the URL empty to create a private GitHub repository named proj')
+    expect(html).not.toContain('aria-required')
+  })
+
+  it('requires the URL and says how to install gh when it is not installed', () => {
+    const html = render({ can_create: false, reason: 'not_installed' })
+    const shown = text(html)
+    expect(labels(html)).toEqual(['Project name', 'Repo URL'])
+    expect(shown).not.toMatch(/optional/i)
+    expect(shown).not.toContain('Leave the URL empty')
+    expect(shown).toContain('gh is not installed on the machine that runs AgentHub')
+    expect(shown).toContain('Installing it and running gh auth login there lets this form create repositories')
+    expect(html).toContain('aria-required="true"')
+  })
+
+  it('requires the URL and says how to log in when gh is not logged in', () => {
+    const html = render({ can_create: false, reason: 'not_logged_in' })
+    const shown = text(html)
+    expect(labels(html)).toEqual(['Project name', 'Repo URL'])
+    expect(shown).not.toContain('Leave the URL empty')
+    expect(shown).toContain('gh is not logged in on the machine that runs AgentHub')
+    expect(shown).toContain('Running gh auth login there lets this form create repositories')
+  })
+
+  it('requires the URL when gh did not answer or the server did not say', () => {
+    for (const github of [{ can_create: false, reason: 'unknown' } as const, undefined]) {
+      const html = render(github)
+      expect(labels(html)).toEqual(['Project name', 'Repo URL'])
+      expect(text(html)).toContain('gh did not answer on the machine that runs AgentHub')
+    }
+  })
+
+  it('shows the error in the block', () => {
+    const html = render({ can_create: false, reason: 'not_installed' }, { message: 'Enter the repo URL: this machine cannot create a GitHub repository.', createdRepo: null })
+    expect(html).toContain('role="alert"')
+    expect(text(html)).toContain('Enter the repo URL: this machine cannot create a GitHub repository.')
   })
 })
