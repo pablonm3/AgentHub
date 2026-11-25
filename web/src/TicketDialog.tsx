@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { api, type Comment, type Task, type TicketDetail, type TicketPatch, type User } from './api'
 import CommentBox from './CommentBox'
+import DescriptionField from './DescriptionField'
 import { positionFor } from './lib/board'
 import { deliveryLine } from './lib/delivery'
 import { formatRelative, repoWebUrl } from './lib/format'
@@ -17,9 +18,9 @@ import {
   useOpenTicket,
   userName,
 } from './store'
-import { color, font, sectionHeading, textarea } from './theme'
+import { color, font, sectionHeading } from './theme'
 import { Avatar, Button, CloseButton, Dialog, EditableTitle, ErrorText, Markdown, Select, StatusPill, Timer, TokenCounts } from './ui'
-import { MicButton, useDictation } from './voice'
+import { useDictation } from './voice'
 
 export default function TicketDialog() {
   const s = useAppState()
@@ -223,27 +224,23 @@ function Description({ text, onSave }: { text: string; onSave: (text: string) =>
       </div>
       {editing ? (
         <>
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-            <textarea
-              aria-label="Description"
-              rows={6}
-              autoFocus
-              value={draft}
-              disabled={busy}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') {
-                  e.stopPropagation()
-                  setEditing(false)
-                } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                  e.preventDefault()
-                  void save()
-                }
-              }}
-              style={{ ...textarea, flex: '1 1 0', minWidth: 0 }}
-            />
-            <MicButton voice={voice} disabled={busy} />
-          </div>
+          <DescriptionField
+            value={draft}
+            onChange={setDraft}
+            voice={voice}
+            minRows={10}
+            disabled={busy}
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.stopPropagation()
+                setEditing(false)
+              } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault()
+                void save()
+              }
+            }}
+          />
           {voice.error && <ErrorText>{voice.error}</ErrorText>}
           <div style={{ display: 'flex', gap: 8 }}>
             <Button kind="primary" onClick={() => void save()} disabled={busy}>

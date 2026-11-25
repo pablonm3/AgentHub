@@ -7,6 +7,7 @@ import ActivityPage from './ActivityPage'
 import AddTicketForm, { NewProjectFields } from './AddTicketForm'
 import App from './App'
 import Board from './Board'
+import DescriptionField from './DescriptionField'
 import NewTaskForm from './NewTaskForm'
 import SettingsPage from './SettingsPage'
 import TaskDialog from './TaskDialog'
@@ -24,6 +25,7 @@ import {
   openTask,
   openTicket,
 } from './store'
+import type { Dictation } from './voice'
 
 const NOW = Date.now()
 
@@ -314,5 +316,46 @@ describe('the New project block', () => {
     const html = render({ can_create: false, reason: 'not_installed' }, { message: 'Enter the repo URL: this machine cannot create a GitHub repository.', createdRepo: null })
     expect(html).toContain('role="alert"')
     expect(text(html)).toContain('Enter the repo URL: this machine cannot create a GitHub repository.')
+  })
+})
+
+describe('card description fields', () => {
+  const textareas = (html: string) => html.match(/<textarea[^>]*>/g) ?? []
+  const descriptionTag = (html: string) => html.match(/<textarea[^>]*aria-label="Description"[^>]*>/)?.[0] ?? ''
+
+  it('opens "Add a card" as a 640px dialog naming the stage, with a 6-line description that follows its text', () => {
+    const html = renderToStaticMarkup(<AddTicketForm stageId="backlog" onClose={() => {}} />)
+    const tag = descriptionTag(html)
+    for (const s of ['rows="6"', 'min-height:142px', 'field-sizing:content', 'max-height:60vh', 'placeholder="Description (optional)"']) {
+      expect(tag).toContain(s)
+    }
+    expect(html).toMatch(/role="dialog"[^>]*max-width:640px/)
+    expect(text(html)).toContain('Backlog')
+  })
+
+  it('gives the card dialog\'s editor settings 10 lines and the microphone', () => {
+    const voice: Dictation = { supported: true, listening: false, error: null, toggle() {}, cancel() {} }
+    const html = renderToStaticMarkup(
+      <DescriptionField value="Retry failed deliveries." onChange={() => {}} minRows={10} voice={voice} />,
+    )
+    const tag = descriptionTag(html)
+    expect(tag).toContain('rows="10"')
+    expect(tag).toContain('min-height:222px')
+    expect(html).toContain('Retry failed deliveries.')
+    expect(html).toContain('aria-label="Start voice input"')
+  })
+
+  it('leaves the other text fields and the board as they were', async () => {
+    openTicket(1)
+    await loadTicketDetail()
+    const newTask = renderToStaticMarkup(<NewTaskForm onClose={() => {}} />)
+    const settings = renderToStaticMarkup(<SettingsPage />)
+    const ticketDialog = renderToStaticMarkup(<TicketDialog />) // read mode: the comment box is its only field
+    expect(textareas(newTask)).toEqual([expect.stringContaining('rows="5"')])
+    expect(textareas(settings).length).toBeGreaterThan(0)
+    for (const tag of textareas(settings)) expect(tag).toContain('rows="8"')
+    expect(textareas(ticketDialog)).toEqual([expect.stringContaining('rows="3"')])
+    for (const html of [newTask, settings, ticketDialog]) expect(html).not.toContain('field-sizing')
+    expect(renderToStaticMarkup(<Board />)).not.toContain('role="dialog"')
   })
 })

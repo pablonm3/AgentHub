@@ -81,9 +81,7 @@ export default function Board() {
             stage={stage}
             cards={cardsOf(tickets, stage.id)}
             users={boot.users}
-            adding={addingIn === stage.id}
             onAdd={() => setAddingIn(stage.id)}
-            onCloseAdd={() => setAddingIn(null)}
             highlighted={dragging !== null && dragOver === stage.id}
             fadedId={dragging}
             onDragOverColumn={() => {
@@ -99,18 +97,17 @@ export default function Board() {
           />
         ))}
       </div>
+      {addingIn !== null && <AddTicketForm stageId={addingIn} onClose={() => setAddingIn(null)} />}
     </main>
   )
 }
 
-/** One stage of the board: header and count, its cards, the empty state and the add-card toggle. */
+/** One stage of the board: header and count, its cards, the empty state and the "Add a card" button. */
 function Column({
   stage,
   cards,
   users,
-  adding,
   onAdd,
-  onCloseAdd,
   highlighted,
   fadedId,
   onDragOverColumn,
@@ -121,9 +118,7 @@ function Column({
   stage: { id: string; name: string }
   cards: Ticket[]
   users: User[]
-  adding: boolean
   onAdd: () => void
-  onCloseAdd: () => void
   highlighted: boolean
   fadedId: number | null
   onDragOverColumn: () => void
@@ -200,34 +195,30 @@ function Column({
           />
         ))}
       </div>
-      {cards.length === 0 && !adding && <EmptyState compact>No cards here. Drop one in or add a card.</EmptyState>}
-      {adding ? (
-        <AddTicketForm stageId={stage.id} onClose={onCloseAdd} />
-      ) : (
-        <button
-          type="button"
-          className="wb-ghost"
-          onClick={onAdd}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            width: '100%',
-            minHeight: 44,
-            padding: '0 10px',
-            border: 0,
-            borderRadius: 9,
-            background: 'transparent',
-            color: color.ink2,
-            fontSize: 13,
-            fontWeight: 600,
-            textAlign: 'left',
-          }}
-        >
-          <PlusIcon />
-          Add a card
-        </button>
-      )}
+      {cards.length === 0 && <EmptyState compact>No cards here. Drop one in or add a card.</EmptyState>}
+      <button
+        type="button"
+        className="wb-ghost"
+        onClick={onAdd}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          width: '100%',
+          minHeight: 44,
+          padding: '0 10px',
+          border: 0,
+          borderRadius: 9,
+          background: 'transparent',
+          color: color.ink2,
+          fontSize: 13,
+          fontWeight: 600,
+          textAlign: 'left',
+        }}
+      >
+        <PlusIcon />
+        Add a card
+      </button>
     </section>
   )
 }

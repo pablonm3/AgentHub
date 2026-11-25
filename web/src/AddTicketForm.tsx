@@ -1,11 +1,12 @@
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react'
 import { api, errorBody, errorMessage, type GithubStatus, type NewTicket } from './api'
+import DescriptionField from './DescriptionField'
 import { repoWebUrl } from './lib/format'
 import { canCreateRepo, newProjectInput } from './lib/newProject'
 import { applyTicketDetail, loadBoot, notify, refresh, useAppState } from './store'
-import { color, font, input, textarea } from './theme'
-import { Button, ErrorText, FieldLabel, Select } from './ui'
-import { MicButton, useDictation } from './voice'
+import { color, font, input } from './theme'
+import { Button, CloseButton, Dialog, ErrorText, FieldLabel, Select } from './ui'
+import { useDictation } from './voice'
 
 const NEW_PROJECT = '__new__'
 const NO_PROJECT = '__none__'
@@ -15,7 +16,7 @@ export interface NewProjectError {
   createdRepo: string | null
 }
 
-/** "Add a card" in one board column: title, description, assignee, model and project. */
+/** "Add a card" to one board stage, in a dialog: title, description, assignee, model and project. */
 export default function AddTicketForm({ stageId, onClose }: { stageId: string; onClose: () => void }) {
   const { boot } = useAppState()
   const uid = useId()
@@ -87,89 +88,95 @@ export default function AddTicketForm({ stageId, onClose }: { stageId: string; o
     { value: NEW_PROJECT, label: 'New project' },
     { value: NO_PROJECT, label: 'No project' },
   ]
+  const stageName = boot.stages.find((g) => g.id === stageId)?.name ?? stageId
+  // Escape, the backdrop and the close button land here; nothing closes while a submit is in flight.
+  const close = () => {
+    if (!busy) onClose()
+  }
 
   return (
-    <form
-      onSubmit={(e) => void submit(e)}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape' && !busy) onClose()
-      }}
-      style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
-    >
-      <input
-        type="text"
-        aria-label="Card title"
-        placeholder="Card title"
-        autoFocus
-        autoComplete="off"
-        value={title}
-        disabled={busy}
-        onChange={(e) => setTitle(e.target.value)}
-        style={{ ...input, height: 44 }}
-      />
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-        <textarea
-          aria-label="Description"
-          placeholder="Description (optional)"
-          rows={3}
-          value={description}
-          disabled={busy}
-          onChange={(e) => setDescription(e.target.value)}
-          style={{ ...textarea, flex: '1 1 0', minWidth: 0 }}
-        />
-        <MicButton voice={voice} disabled={busy} />
-      </div>
-      {voice.error && <ErrorText>{voice.error}</ErrorText>}
-      <FieldLabel htmlFor={`${uid}-assignee`}>Assignee</FieldLabel>
-      <Select
-        id={`${uid}-assignee`}
-        value={assignee}
-        onChange={setAssignee}
-        disabled={busy}
-        options={users.map((u) => ({ value: u.id, label: u.name }))}
-      />
-      <FieldLabel htmlFor={`${uid}-model`}>Model</FieldLabel>
-      <Select
-        id={`${uid}-model`}
-        value={model}
-        onChange={setModel}
-        disabled={busy}
-        options={boot.models.map((m) => ({ value: m, label: m }))}
-      />
-      <FieldLabel htmlFor={`${uid}-project`}>Project</FieldLabel>
-      <Select
-        id={`${uid}-project`}
-        value={project}
-        onChange={(v) => {
-          setProject(v)
-          setNewProjectError(null)
-        }}
-        disabled={busy}
-        options={options}
-      />
-      {isNew && (
-        <NewProjectFields
-          github={boot.github}
-          name={projectName}
-          repoUrl={repoUrl}
-          busy={busy}
-          error={newProjectError}
-          onName={setProjectName}
-          onRepoUrl={setRepoUrl}
-        />
-      )}
-      {formError && (
-        <ErrorText>{formError}</ErrorText>
-      )}
-      <div style={{ display: 'flex', gap: 8 }}>
-        <Button kind="primary" type="submit" disabled={busy} style={{ minHeight: 44 }}>
-          {busy ? (isNew ? 'Registering project…' : 'Adding…') : 'Add card'}
-        </Button>
-        <Button kind="ghost" onClick={onClose} disabled={busy} style={{ minHeight: 44 }}>
-          Cancel
-        </Button>
-      </div>
-    </form>
+    <Dialog label="Add a card" onClose={close} maxWidth={640}>
+      <form onSubmit={(e) => void submit(e)} style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 10px 24px 24px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <h2 style={{ margin: 0, fontFamily: font.display, fontSize: 21, lineHeight: '28px', fontWeight: 700 }}>Add a card</h2>
+          <span style={{ color: color.muted, fontSize: 13 }}>{stageName}</span>
+          <span style={{ marginLeft: 'auto' }}>
+            <CloseButton label="Close add a card" onClick={close} />
+          </span>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingRight: 14 }}>
+          <input
+            type="text"
+            aria-label="Card title"
+            placeholder="Card title"
+            autoFocus
+            autoComplete="off"
+            value={title}
+            disabled={busy}
+            onChange={(e) => setTitle(e.target.value)}
+            style={{ ...input, height: 44 }}
+          />
+          <DescriptionField
+            value={description}
+            onChange={setDescription}
+            voice={voice}
+            minRows={6}
+            disabled={busy}
+            placeholder="Description (optional)"
+          />
+          {voice.error && <ErrorText>{voice.error}</ErrorText>}
+          <FieldLabel htmlFor={`${uid}-assignee`}>Assignee</FieldLabel>
+          <Select
+            id={`${uid}-assignee`}
+            value={assignee}
+            onChange={setAssignee}
+            disabled={busy}
+            options={users.map((u) => ({ value: u.id, label: u.name }))}
+          />
+          <FieldLabel htmlFor={`${uid}-model`}>Model</FieldLabel>
+          <Select
+            id={`${uid}-model`}
+            value={model}
+            onChange={setModel}
+            disabled={busy}
+            options={boot.models.map((m) => ({ value: m, label: m }))}
+          />
+          <FieldLabel htmlFor={`${uid}-project`}>Project</FieldLabel>
+          <Select
+            id={`${uid}-project`}
+            value={project}
+            onChange={(v) => {
+              setProject(v)
+              setNewProjectError(null)
+            }}
+            disabled={busy}
+            options={options}
+          />
+          {isNew && (
+            <NewProjectFields
+              github={boot.github}
+              name={projectName}
+              repoUrl={repoUrl}
+              busy={busy}
+              error={newProjectError}
+              onName={setProjectName}
+              onRepoUrl={setRepoUrl}
+            />
+          )}
+          {formError && (
+            <ErrorText>{formError}</ErrorText>
+          )}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button kind="primary" type="submit" disabled={busy} style={{ minHeight: 44 }}>
+              {busy ? (isNew ? 'Registering project…' : 'Adding…') : 'Add card'}
+            </Button>
+            <Button kind="ghost" onClick={onClose} disabled={busy} style={{ minHeight: 44 }}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      </form>
+    </Dialog>
   )
 }
 
