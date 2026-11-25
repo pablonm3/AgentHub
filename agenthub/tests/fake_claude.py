@@ -18,6 +18,7 @@ Scenario: `$AGENTHUB_FAKE_DIR/scenario.json`, read on every call. Top-level keys
   not_logged_in         `auth status` says logged out and every turn fails as Claude does
   session_gone          a call with --resume finds no session: stderr message, exit 1
   no_structured_output  the result carries no structured_output
+  rate_limit_info       an object emitted as a `rate_limit_event` right after `init` (the account's limits)
 Every call is appended to `$AGENTHUB_FAKE_DIR/calls.jsonl` (argv, cwd, selected environment).
 """
 
@@ -95,6 +96,8 @@ def main() -> int:
     spath.write_text(json.dumps(seen))
     model = arg(argv, "--model") or "opus"
     emit({"type": "system", "subtype": "init", "session_id": session, "model": model})
+    if sc.get("rate_limit_info") is not None:
+        emit({"type": "rate_limit_event", "session_id": session, "rate_limit_info": sc["rate_limit_info"]})
     emit({"type": "assistant", "session_id": session,
           "message": {"content": [{"type": "text", "text": f"Working on it ({len(seen)} messages in this session)."}]}})
     outputs = []

@@ -70,6 +70,10 @@ uv run python -m agenthub.tests.serve_fake --port 8799
 `--gh logged-out` or `--gh missing` starts it with a fake `gh` that is not logged in or not
 installed, to see the "New project" form of a machine that cannot create a repository.
 
+After the first fake turn the header shows the usage left of a `fable` session, `Week 78%` and
+`Fable week 63%`; edit `fake-claude/scenario.json` in the printed temp folder to try other figures
+(keys in `agenthub/tests/fake_claude.py`).
+
 ## Data
 
 Everything the app writes is under `data/` (`AGENTHUB_DATA_DIR` moves it). To start over, stop the

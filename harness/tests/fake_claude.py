@@ -14,6 +14,10 @@ Scenario: JSON file at FAKE_CLAUDE_SCENARIO, e.g.
 waits for the human. It leaves `chat_<step>_open` next to the scenario file and, when nobody ended
 it before the time was up, `chat_<step>_exited_by_itself`.
 Sequential values are consumed through a counter file next to it (FAKE_CLAUDE_SCENARIO + ".state").
+`rate_limit_info` is an object every working print-mode call emits as a `rate_limit_event` right after
+`init`, flushed before the call does its work (the account's limits, as a real session reports them).
+`hold_s` maps a step id to seconds its working calls stay open after those first events, so a test can
+look at a step while it runs.
 
 `faults` maps a step id to what its successive print-mode calls do instead of the work, in call order
 (a continued session counts as a call); once the list is used up the step works normally:
@@ -171,6 +175,14 @@ def print_mode(prompt: str, resume: str | None = None) -> int:
     if call < len(faults) and faults[call]:
         save_state(st, sp)
         return fail_as(faults[call], session, sc)
+    init = {"type": "system", "subtype": "init", "session_id": session}
+    info = sc.get("rate_limit_info")
+    hold = float((sc.get("hold_s") or {}).get(step) or 0)
+    started_early = info is not None or hold > 0
+    if started_early:
+        emit(init, *([{"type": "rate_limit_event", "rate_limit_info": info}] if info is not None else []))
+        sys.stdout.flush()
+        time.sleep(hold)
     paths = prompt_paths(prompt)
     new_paths = [p for p in paths if not p.exists()]
     base = {"run_id": run_id, "step": step, "skill": skill}
@@ -258,7 +270,7 @@ def print_mode(prompt: str, resume: str | None = None) -> int:
     save_state(st, sp)
 
     emit(
-        {"type": "system", "subtype": "init", "session_id": session},
+        *([] if started_early else [init]),
         {"type": "assistant", "message": {"content": [{"type": "text", "text": f"fake {skill} done"}]}},
         {"type": "result", "subtype": "success", "is_error": False, "result": summary, "total_cost_usd": 0.01,
          "duration_ms": 1200, "num_turns": 2, "session_id": session, "modelUsage": model_usage()},

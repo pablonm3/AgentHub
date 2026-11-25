@@ -20,7 +20,16 @@ from string import Template
 from typing import Any
 
 from . import worktree as wt
-from .claude_runner import StepResult, base_env, run_chat, run_step, session_tokens, write_chat_settings, write_step_settings
+from .claude_runner import (
+    StepResult,
+    base_env,
+    limit_usage,
+    run_chat,
+    run_step,
+    session_tokens,
+    write_chat_settings,
+    write_step_settings,
+)
 from .config import DEFAULTS_FALLBACK, Manifest, Step, Workflow, load_defaults, load_manifest, load_workflow
 from .link import link_worktree
 from .naming import (
@@ -459,6 +468,17 @@ class Orchestrator:
             exe["session_id"] = session_id
             st.save()
 
+        def note_usage(event: dict) -> None:
+            """The account's limits a stream event reports, merged per limit into state.json for AgentHub."""
+            figures = limit_usage(event)
+            if not figures:
+                return
+            read_at = now_iso()
+            latest = {f["limit"]: f for f in st.get("usage") or []}
+            latest.update({f["limit"]: {**f, "read_at": read_at} for f in figures})
+            st["usage"] = list(latest.values())
+            st.save()
+
         while True:
             continuing = (exe.get("attempts") or 1) > 1
             res = run_step(
@@ -476,6 +496,7 @@ class Orchestrator:
                 quiet=self.quiet,
                 resume_session=exe["session_id"] if continuing else None,
                 on_session=remember_session,
+                on_event=note_usage,
             )
             exe["cost_usd"] = _session_cost(exe.get("cost_usd"), res.cost_usd)
             exe["tokens"] = session_tokens(exe.get("tokens"), res.tokens)

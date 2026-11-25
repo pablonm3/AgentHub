@@ -298,6 +298,7 @@ const TOPIC_LOADERS: Record<ServerEvent['topic'], Array<() => Promise<void>>> = 
   settings: [loadBoot],
   users: [loadBoot],
   projects: [loadBoot],
+  usage: [loadBoot],
 }
 
 function loadersFor(topics: Iterable<ServerEvent['topic']>): Set<() => Promise<void>> {

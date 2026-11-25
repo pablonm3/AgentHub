@@ -5,9 +5,12 @@ import SettingsPage from './SettingsPage'
 import TaskDialog from './TaskDialog'
 import TasksPage from './TasksPage'
 import TicketDialog from './TicketDialog'
+import type { UsageFigure } from './api'
+import { formatRelative } from './lib/format'
+import { formatResetTime, usageLines } from './lib/usage'
 import { closeTask, closeTicket, dismissNotice, setTab, startLive, useAppState, type Notice, type Tab } from './store'
 import { color, font } from './theme'
-import { Avatar, BellIcon, BoardIcon, Button, Dialog, ErrorBoundary, GearIcon, TerminalIcon } from './ui'
+import { Avatar, BellIcon, BoardIcon, Button, Dialog, ErrorBoundary, GearIcon, TerminalIcon, useNow } from './ui'
 
 export default function App() {
   const s = useAppState()
@@ -68,6 +71,7 @@ export default function App() {
           />
         </nav>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 16, padding: '12px 0' }}>
+          {s.boot && <UsageLeft figures={s.boot.usage} />}
           <button
             type="button"
             className="wb-ghost"
@@ -138,6 +142,40 @@ export default function App() {
         </ErrorBoundary>
       )}
       <Notices notices={s.notices} />
+    </div>
+  )
+}
+
+const USAGE_TITLE =
+  'The share of each limit of the Claude account still unused, as last reported by an AI turn or a harness step'
+
+/** The account's usage left per limit; ages advance and ended periods drop out on a 30 s tick. */
+function UsageLeft({ figures }: { figures: UsageFigure[] | undefined }) {
+  const now = useNow(true, 30_000)
+  const lines = usageLines(figures, now)
+  if (lines.length === 0) {
+    return (
+      <span title={USAGE_TITLE} style={{ color: color.muted, fontSize: 12, lineHeight: '16px' }}>
+        Usage left: not known
+      </span>
+    )
+  }
+  return (
+    <div
+      title={USAGE_TITLE}
+      style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 14px', fontSize: 12, lineHeight: '16px' }}
+    >
+      <span style={{ color: color.muted, fontWeight: 600 }}>Usage left</span>
+      {lines.map((line) => (
+        <div key={line.limit} style={{ display: 'flex', flexDirection: 'column', whiteSpace: 'nowrap' }}>
+          <span style={{ color: color.ink, fontWeight: 600 }}>
+            {line.percentLeft === null ? `${line.label} limit reached` : `${line.label} ${line.percentLeft}%`}
+          </span>
+          <span style={{ color: color.muted }}>
+            {`resets ${formatResetTime(line.resetsAt)} · read ${formatRelative(line.readAt, now)}`}
+          </span>
+        </div>
+      ))}
     </div>
   )
 }

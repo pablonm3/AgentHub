@@ -133,6 +133,18 @@ export interface TicketDetail extends Ticket {
   warning?: string
 }
 
+/** The last figure one limit of the Claude account reported in a turn or a harness step. */
+export interface UsageFigure {
+  /** The limit's window as Claude names it: `seven_day`, `five_hour`, `seven_day_overage_included`, … */
+  limit: string
+  /** Share used, 0 to 1; null only for a reached limit that reported no share. */
+  used: number | null
+  /** Epoch seconds. */
+  resets_at: number
+  reached: boolean
+  read_at: string
+}
+
 export interface Bootstrap {
   users: User[]
   stages: Stage[]
@@ -141,6 +153,8 @@ export interface Bootstrap {
   projects: Project[]
   login: Login
   github: GithubStatus
+  /** One entry per known limit; empty when none is known. */
+  usage: UsageFigure[]
   server_time: string | number
 }
 
@@ -287,7 +301,7 @@ export const api = {
 }
 
 export interface ServerEvent {
-  topic: 'tickets' | 'tasks' | 'activity' | 'settings' | 'users' | 'projects'
+  topic: 'tickets' | 'tasks' | 'activity' | 'settings' | 'users' | 'projects' | 'usage'
   id?: number
 }
 

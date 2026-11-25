@@ -1,15 +1,16 @@
 """Runs of the harness copy started by tasks: project rules, gates as comments, guarded resume,
-questions, harness tokens (fake `claude` for turns, the harness's fake for the run's steps)."""
+questions, harness tokens, usage figures (fake `claude` for turns, the harness's fake for the run's steps)."""
 
 import json
 import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
 
-from agenthub.harness_bridge import BridgeRefused
+from agenthub.harness_bridge import BridgeRefused, HarnessBridge
 from harness.orchestrator import pending_question
 from agenthub.tests.conftest import wait_for
 
@@ -181,3 +182,55 @@ def test_tokens_follow_the_state_and_the_exit_syncs_the_private_folder(app, env)
     assert "run stub_1" in log.splitlines() and "from_a_step.md" in files
     t = app.wait_task(task["id"])
     assert "Harness run stub_1 finished" in [e["text"] for e in t["events"] if e["kind"] == "notice"][-1]
+
+
+def _week_info(used: float, resets_at: int) -> dict:
+    return {"status": "allowed", "resetsAt": resets_at, "rateLimitType": "seven_day",
+            "unifiedWindows": {"seven_day": {"utilization": used, "resetsAt": resets_at, "status": "allowed"}}}
+
+
+def test_the_usage_in_a_runs_state_reaches_the_bootstrap(app):
+    # Constraint: a run step's figures cross to the server through state.json `usage`; the watch loop re-reads an
+    #             unchanged file every 2 s, which must change and publish nothing (AC5 server half, AC11).
+    # Input: a stub run's state.json with Week and Fable week; refresh_usage twice; then a state without `usage`
+    #        and one with a text there.
+    # Expected output: True and both figures in the bootstrap; False for the repeat and for the other two states.
+    layout = app.config.layout()
+    state_file = layout.state_file("stub_1")
+    state_file.parent.mkdir(parents=True)
+    resets_at = int(time.time()) + 86400
+    usage = [
+        {"limit": "seven_day", "used": 0.22, "resets_at": resets_at, "reached": False, "read_at": "2026-11-25T14:03:07Z"},
+        {"limit": "seven_day_overage_included", "used": 0.37, "resets_at": resets_at, "reached": False,
+         "read_at": "2026-11-25T14:03:07Z"},
+    ]
+    state_file.write_text(json.dumps({"status": "running", "feature": "stub", "executions": [], "usage": usage}))
+    assert app.hub.bridge.refresh_usage("stub_1")
+    assert app.get("/api/bootstrap")["usage"] == usage
+    assert not app.hub.bridge.refresh_usage("stub_1")
+    state_file.write_text(json.dumps({"status": "running", "feature": "stub", "executions": []}))
+    assert not app.hub.bridge.refresh_usage("stub_1")
+    state_file.write_text(json.dumps({"status": "running", "feature": "stub", "executions": [], "usage": "seven_day"}))
+    assert not app.hub.bridge.refresh_usage("stub_1")
+    assert app.get("/api/bootstrap")["usage"] == usage
+
+
+def test_a_running_step_updates_the_usage_before_it_ends(live, env, monkeypatch):
+    # Constraint: a harness step's new figure reaches the header while that step is still running (AC5 server half).
+    # Input: a task starts a run whose steps report Week 0.23 and whose step 4 stays open 5 s after that event;
+    #        the bridge polls every 0.2 s; the turn itself reports no figure.
+    # Expected output: the bootstrap shows Week 0.23 while state.json still has step 4 running; Stop ends the run.
+    monkeypatch.setattr(HarnessBridge, "poll_s", 0.2)
+    resets_at = int(time.time()) + 86400
+    Path(env.vars["FAKE_CLAUDE_SCENARIO"]).write_text(json.dumps({"rate_limit_info": _week_info(0.23, resets_at),
+                                                                  "hold_s": {"4": 5}}))
+    env.scenario(turns=[{"commands": [_start_command("usage-feat")], "message": "Started the run."}])
+    ticket = live.ticket("Usage", "Show the usage.", assignee="engineer", project="demo")
+    task_id = ticket["tasks"][0]["id"]
+    week = wait_for(lambda: next((f for f in live.get("/api/bootstrap")["usage"] if f["limit"] == "seven_day"), None),
+                    90, "the step's figure in the bootstrap")
+    state = json.loads(live.config.layout().state_file("usage-feat_1").read_text())
+    assert (week["used"], week["resets_at"], week["reached"]) == (0.23, resets_at, False)
+    assert (state["current"], state["steps"]["4"]["status"]) == ("4", "running")
+    live.post(f"/api/tasks/{task_id}/stop")
+    wait_for(lambda: not live.hub.bridge._alive("usage-feat_1"), 30, "the run to stop")

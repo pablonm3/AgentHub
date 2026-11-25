@@ -20,6 +20,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -146,6 +147,18 @@ def build_fake_environment(base: Path, private_source: Path | None = None) -> di
     }
 
 
+def default_scenario() -> dict:
+    """What fake mode's `claude` reports: the `rate_limit_event` of a real `fable` session, Week 22% and
+    Fable week 37% used, both resetting 4 days after the start."""
+    resets_at = int(time.time()) + 4 * 86400
+    windows = {
+        "seven_day": {"utilization": 0.22, "resetsAt": resets_at, "status": "allowed"},
+        "seven_day_overage_included": {"utilization": 0.37, "resetsAt": resets_at, "status": "allowed"},
+    }
+    return {"rate_limit_info": {"status": "allowed", "resetsAt": resets_at, "rateLimitType": "seven_day",
+                                "overageStatus": "rejected", "isUsingOverage": False, "unifiedWindows": windows}}
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="AgentHub in fake mode (fake claude, fake gh, temp data and private folders)")
     p.add_argument("--port", type=int, default=8799)
@@ -160,6 +173,7 @@ def main() -> int:
             (Path(env["AGENTHUB_FAKE_GH_DIR"]) / "scenario.json").write_text(json.dumps({"not_logged_in": True}))
         elif args.gh == "missing":
             env["AGENTHUB_GH_BIN"] = str(base / "no-gh" / "gh")
+        (base / "fake-claude" / "scenario.json").write_text(json.dumps(default_scenario(), indent=2))
         os.environ.update(env)
         os.environ["AGENTHUB_PORT"] = str(args.port)
         import uvicorn

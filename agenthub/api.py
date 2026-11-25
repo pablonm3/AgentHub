@@ -94,6 +94,7 @@ def create_app(config: Config | None = None, start: bool = True) -> FastAPI:
             "projects": hub.projects.list_projects(),
             "login": hub.sessions.login_status(),
             "github": hub.projects.github_status(),
+            "usage": hub.usage.current(),
             "server_time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
 
