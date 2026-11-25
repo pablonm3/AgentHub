@@ -164,7 +164,8 @@ class Projects:
         self.config = hub.config
         self.layout = hub.config.layout()
         self._lock = threading.Lock()
-        self._github: tuple[float, dict] | None = None
+        self._github_status: dict | None = None
+        self._github_checked_at = 0.0
 
     # ------------------------------------------------------------ reading
     def list_projects(self) -> list[dict]:
@@ -232,8 +233,8 @@ class Projects:
         except NoBranchError:
             if not is_empty(repo):
                 raise  # it has branches, but HEAD names a missing one: nothing is pushed to it
-        push_first_commit(repo, name)
-        return FIRST_BRANCH
+            push_first_commit(repo, name)
+            return FIRST_BRANCH
 
     def _wait_for_branch(self, url: str) -> str:
         for attempt in range(self.branch_retries):
@@ -258,11 +259,11 @@ class Projects:
     # ------------------------------------------------------------ GitHub
     def github_status(self, fresh: bool = False) -> dict:
         """Whether `gh` on this machine can create a GitHub repository, and why not. Never raises."""
-        if not fresh and self._github and time.monotonic() - self._github[0] < self.github_cache_s:
-            return self._github[1]
-        status = self._read_github()
-        self._github = (time.monotonic(), status)
-        return status
+        if not fresh and self._github_status is not None and time.monotonic() - self._github_checked_at < self.github_cache_s:
+            return self._github_status
+        self._github_status = self._read_github()
+        self._github_checked_at = time.monotonic()
+        return self._github_status
 
     def _read_github(self) -> dict:
         # Not `--json`: with it `gh auth status` exits 0 whatever the login state.
