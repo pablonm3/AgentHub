@@ -23,9 +23,11 @@ import {
   loadTickets,
   openTask,
   openTicket,
+  refresh,
 } from './store'
 
 const NOW = Date.now()
+const RESETS = Math.floor(NOW / 1000) + 4 * 86400
 
 const boot: Bootstrap = {
   users: [
@@ -45,6 +47,16 @@ const boot: Bootstrap = {
   default_model: 'opus',
   projects: [{ name: 'AgentHub', default_base: 'main', repo: 'git@github.com:owner/AgentHub.git', ready: true }],
   login: { logged_in: true, method: 'claude.ai', subscription: 'max', expires_at: null, detail: 'ok' },
+  usage: [
+    { limit: 'seven_day', used: 0.22, resets_at: RESETS, reached: false, read_at: new Date(NOW - 5 * 60_000).toISOString() },
+    {
+      limit: 'seven_day_overage_included',
+      used: 0.37,
+      resets_at: RESETS,
+      reached: false,
+      read_at: new Date(NOW - 2 * 3_600_000).toISOString(),
+    },
+  ],
   server_time: new Date(NOW).toISOString(),
 }
 
@@ -153,6 +165,15 @@ beforeAll(async () => {
 
 const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
 
+/** The header's text, as the page shows it. */
+const headerText = () => text(/<header[\s\S]*?<\/header>/.exec(renderToStaticMarkup(<App />))?.[0] ?? '')
+
+/** Serve and load a bootstrap that differs from the fixture in `over`. */
+async function applyBoot(over: Partial<Bootstrap>): Promise<void> {
+  answers['GET /api/bootstrap'] = { ...boot, ...over }
+  await loadBoot()
+}
+
 describe('views rendered from contract-shaped data', () => {
   it('loads every list through relative URLs', () => {
     expect(getState().boot?.users).toHaveLength(4)
@@ -169,6 +190,44 @@ describe('views rendered from contract-shaped data', () => {
     expect(page).toMatch(/Tasks 1/) // one task waiting on user
     expect(page).toMatch(/Activity 2/) // two unseen AI comments
     expect(page).toContain('Settings')
+    expect(page).toContain('Usage left')
+    expect(page).toMatch(/Week\s+78%.*Fable week\s+63%/)
+    expect(page).toMatch(/Week\s+78%\s+resets\s.+?·\s+read\s+5 min ago/)
+    expect(page).toMatch(/Fable week\s+63%\s+resets\s.+?·\s+read\s+2 h ago/)
+  })
+
+  it('shows in the header that the usage left is not known when no figure is', async () => {
+    try {
+      await applyBoot({ usage: [] })
+      const header = headerText()
+      expect(header).toContain('Usage left: not known')
+      expect(header).not.toContain('%')
+      expect(header).not.toContain('resets')
+    } finally {
+      await applyBoot({})
+    }
+  })
+
+  it('shows a reached limit in the header before the weekly figures', async () => {
+    const fiveHour = { limit: 'five_hour', used: null, resets_at: RESETS - 86400, reached: true, read_at: new Date(NOW).toISOString() }
+    try {
+      await applyBoot({ usage: [...boot.usage, fiveHour] })
+      expect(headerText()).toMatch(/5 h limit reached\s+resets\s.+?·\s+read\s+just now.*Week\s+78%/)
+    } finally {
+      await applyBoot({})
+    }
+  })
+
+  it('reloads the figures when the server publishes topic usage', async () => {
+    const newer = [{ ...boot.usage[0], used: 0.24, read_at: new Date(NOW).toISOString() }]
+    try {
+      answers['GET /api/bootstrap'] = { ...boot, usage: newer }
+      refresh('usage')
+      await vi.waitFor(() => expect(getState().boot?.usage).toEqual(newer))
+      expect(headerText()).toMatch(/Week\s+76%/)
+    } finally {
+      await applyBoot({})
+    }
   })
 
   it('shows the board columns and the card', () => {

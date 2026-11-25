@@ -66,6 +66,10 @@ a temp data folder and a temp clone of `private/`, all deleted on Ctrl+C:
 uv run python -m agenthub.tests.serve_fake --port 8799
 ```
 
+After the first fake turn the header shows the usage left of a `fable` session, `Week 78%` and
+`Fable week 63%`; edit `fake-claude/scenario.json` in the printed temp folder to try other figures
+(keys in `agenthub/tests/fake_claude.py`).
+
 ## Data
 
 Everything the app writes is under `data/` (`AGENTHUB_DATA_DIR` moves it). To start over, stop the

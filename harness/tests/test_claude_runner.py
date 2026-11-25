@@ -12,6 +12,7 @@ import pytest
 from harness.claude_runner import (
     CHAT_DONE_HOOK,
     base_env,
+    limit_usage,
     result_tokens,
     run_step,
     session_tokens,
@@ -207,3 +208,81 @@ def test_session_tokens_replace_a_running_total_and_add_a_lower_figure() -> None
     assert session_tokens(TOKENS_1000, double) == double
     assert session_tokens(double, TOKENS_1000) == {kind: 3 * n for kind, n in TOKENS_1000.items()}
     assert result_tokens({"type": "result", "total_cost_usd": 0.01}) is None
+
+
+R = 1795993200  # resetsAt of the transcripts: 2026-11-29 23:00 UTC
+OVERAGE = {"overageStatus": "rejected", "overageDisabledReason": "org_level_disabled", "isUsingOverage": False}
+# rate_limit_info of real transcript lines (CLI 2.1.331): an opus session, a fable session
+OPUS_INFO = {"status": "allowed", "resetsAt": R, "rateLimitType": "seven_day", **OVERAGE,
+             "unifiedWindows": {"seven_day": {"utilization": 0.22, "resetsAt": R, "status": "allowed"}}}
+FABLE_INFO = {"status": "allowed", "resetsAt": R, "rateLimitType": "seven_day", **OVERAGE,
+              "unifiedWindows": {"seven_day": {"utilization": 0.22, "resetsAt": R, "status": "allowed"},
+                                 "seven_day_overage_included": {"utilization": 0.37, "resetsAt": R, "status": "allowed"}}}
+
+
+def _limit_event(info: object) -> dict:
+    return {"type": "rate_limit_event", "rate_limit_info": info}
+
+
+def _fig(limit: str, used: float | None, resets_at: int = R, reached: bool = False) -> dict:
+    return {"limit": limit, "used": used, "resets_at": resets_at, "reached": reached}
+
+
+def _windows(**windows: dict) -> dict:
+    return {"status": "allowed", "resetsAt": R, "rateLimitType": "seven_day", "unifiedWindows": windows}
+
+
+@pytest.mark.parametrize(
+    "event, expected",
+    [
+        (_limit_event(OPUS_INFO), [_fig("seven_day", 0.22)]),
+        (_limit_event(FABLE_INFO), [_fig("seven_day", 0.22), _fig("seven_day_overage_included", 0.37)]),
+        (_limit_event(_windows(five_hour={"utilization": 0.10, "resetsAt": R - 86400, "status": "allowed"},
+                               seven_day={"utilization": 0.22, "resetsAt": R, "status": "allowed"})),
+         [_fig("five_hour", 0.10, R - 86400), _fig("seven_day", 0.22)]),
+        (_limit_event(_windows(seven_day={"utilization": 0.22, "resetsAt": R, "status": "allowed"},
+                               five_hour={"utilization": "0.1", "resetsAt": R, "status": "allowed"})),
+         [_fig("seven_day", 0.22)]),
+        (_limit_event(_windows(seven_day={"utilization": 0.22, "resetsAt": R, "status": "allowed"},
+                               five_hour={"utilization": 0.1, "status": "allowed"})),
+         [_fig("seven_day", 0.22)]),
+        (_limit_event({"status": "rejected", "resetsAt": R, "rateLimitType": "five_hour"}),
+         [_fig("five_hour", None, reached=True)]),
+        (_limit_event({"status": "rejected", "resetsAt": R, "rateLimitType": "five_hour", "unifiedWindows": {
+            "five_hour": {"utilization": 1.0, "resetsAt": R, "status": "rejected"},
+            "seven_day": {"utilization": 0.5, "resetsAt": R + 86400, "status": "allowed"}}}),
+         [_fig("five_hour", 1.0, reached=True), _fig("seven_day", 0.5, R + 86400)]),
+        (_limit_event({"status": "rejected", "rateLimitType": "five_hour", "unifiedWindows": {
+            "seven_day": {"utilization": 0.5, "resetsAt": R, "status": "allowed"}}}),
+         [_fig("seven_day", 0.5)]),
+        (_limit_event({"status": "rejected", "rateLimitType": "five_hour"}), []),
+        (_limit_event({"status": "rejected", "resetsAt": R, "unifiedWindows": {
+            "seven_day": {"utilization": 0.5, "resetsAt": R, "status": "allowed"}}}),
+         [_fig("seven_day", 0.5)]),
+        (_limit_event({"status": "allowed", "resetsAt": R, "rateLimitType": "seven_day", "utilization": 0.3}),
+         [_fig("seven_day", 0.3)]),
+        ({"type": "assistant", "message": {"content": []}}, []),
+        (_limit_event("rejected"), []),
+        (_limit_event({**OPUS_INFO, "unifiedWindows": [{"utilization": 0.22, "resetsAt": R}]}), []),
+        (_limit_event(_windows(seven_day={"utilization": 22, "resetsAt": R, "status": "allowed"})), []),
+        (_limit_event(_windows(seven_day={"utilization": -0.1, "resetsAt": R, "status": "allowed"})), []),
+        (_limit_event(_windows(seven_day={"utilization": True, "resetsAt": R, "status": "allowed"})), []),
+        (_limit_event(_windows(seven_day={"utilization": 0.2, "resetsAt": True, "status": "allowed"})), []),
+        (_limit_event(_windows(seven_day={"utilization": float("nan"), "resetsAt": float("inf")})), []),
+        ("rate_limit_event", []),
+    ],
+    ids=["opus", "fable", "five_hour_and_seven_day", "text_utilization", "no_resets_at", "rejected_without_windows",
+         "rejected_with_windows", "rejected_without_resets_at", "rejected_with_nothing_readable",
+         "rejected_without_limit_name", "documented_top_level", "assistant_event", "info_is_text", "windows_list",
+         "utilization_22", "utilization_negative", "utilization_bool", "resets_at_bool", "nan_and_inf", "not_a_dict"],
+)
+def test_limit_usage_reads_every_window_of_a_rate_limit_event(event, expected) -> None:
+    # Constraint: the header shows one figure per limit the account reports (AC1, AC13, AC14), a reached limit
+    #             with its reset time (AC9), and leaves a limit as it was when its window is unreadable (AC10);
+    #             the event's shape is undocumented, so reading it must never raise.
+    # Input: real opus and fable events, a 5-hour window next to the weekly one, unreadable windows, the
+    #        rejection the harness fake emits, rejections without a reset time or a limit name, the documented
+    #        top-level shape, other events and malformed values.
+    # Expected output: one figure per readable window under its own name; a rejection with a reset time marks its
+    #                  limit reached, keeping the window's share or None; nothing for anything unreadable.
+    assert limit_usage(event) == expected

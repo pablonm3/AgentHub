@@ -413,6 +413,8 @@ class Tasks:
 
     def _on_stream_event(self, task_id: int, active: ActiveTurn, ev: dict) -> None:
         self.db.run("UPDATE turns SET last_event_at = ? WHERE id = ?", (now_ms(), active.turn_id))
+        if ev.get("type") == "rate_limit_event":
+            self.hub.usage.record_event(ev)
         if ev.get("type") != "assistant":
             return
         for block in (ev.get("message") or {}).get("content") or []:

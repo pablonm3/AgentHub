@@ -1,5 +1,5 @@
 """Runs of the harness copy started by tasks: project rules, watching, gates as comments, questions,
-guarded resume, and the runs' token counts (AC26–AC29, AC40, AC41).
+guarded resume, the runs' token counts (AC26–AC29, AC40, AC41) and the usage figures their steps report.
 
 A run lasts hours and a turn is a process that ends, so the server owns the run: it spawns
 `agenthub-harness run` in its own process group, reads the run's `state.json` while it lives and
@@ -161,8 +161,10 @@ class HarnessBridge:
         try:
             while self._alive(run_id):
                 self.refresh_tokens(run_id)
+                self.refresh_usage(run_id)
                 time.sleep(self.poll_s)
             self.refresh_tokens(run_id)
+            self.refresh_usage(run_id)
             self.hub.private.sync(f"run {run_id}")  # a step may have added to a project's AGENTS.md (AC37)
             self._on_exit(run_id)
         except Exception:
@@ -195,6 +197,11 @@ class HarnessBridge:
             task_id = self.db.value("SELECT task_id FROM harness_runs WHERE run_id = ?", (run_id,))
             self.hub.events.publish("tasks", task_id)
         return bool(changed)
+
+    def refresh_usage(self, run_id: str) -> bool:
+        """The account's limits the run's steps reported (state.json `usage`) to the server's figures. Idempotent."""
+        state = self._read_state(run_id)
+        return bool(state) and self.hub.usage.record(state.get("usage"))
 
     def _on_exit(self, run_id: str) -> None:
         row = self.db.one("SELECT * FROM harness_runs WHERE run_id = ?", (run_id,))

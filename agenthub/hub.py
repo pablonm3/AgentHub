@@ -14,6 +14,7 @@ from .reports import Reports
 from .sessions import Sessions
 from .tasks import Tasks
 from .tickets import Tickets
+from .usage import Usage
 
 
 class Hub:
@@ -24,6 +25,7 @@ class Hub:
         os.environ["HARNESS_CLAUDE_BIN"] = config.claude_bin
         self.db = Database(config.db_path)
         self.events = Events()
+        self.usage = Usage(self)
         self.sessions = Sessions(config)
         self.private = PrivateSync(config.private_dir)
         self.projects = Projects(self)

@@ -11,6 +11,7 @@ a Stop hook that reports when the human's answer is recorded, so the harness can
 from __future__ import annotations
 
 import json
+import math
 import os
 import shlex
 import shutil
@@ -145,6 +146,71 @@ def result_tokens(result_event: dict) -> dict[str, int] | None:
     if not usage:
         return None
     return {kind: sum(int(m.get(key) or 0) for m in usage.values()) for kind, key in TOKEN_KINDS.items()}
+
+
+def _real(value: object) -> int | float | None:
+    """A finite number; a boolean, a text or NaN is not one."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) or (isinstance(value, float) and math.isfinite(value)):
+        return value
+    return None
+
+
+def _share(value: object) -> float | None:
+    """A readable `utilization`: a real number from 0 to 1."""
+    n = _real(value)
+    return float(n) if n is not None and 0 <= n <= 1 else None
+
+
+def _epoch(value: object) -> int | None:
+    """A readable `resetsAt`: a real number of epoch seconds above 0."""
+    n = _real(value)
+    return int(n) if n is not None and n > 0 else None
+
+
+def limit_usage(event: object) -> list[dict]:
+    """The account's limits a `rate_limit_event` reports: one figure per limit,
+    `{"limit", "used", "resets_at", "reached"}`, `used` None only for a reached limit that reported no share.
+
+    Every window of `unifiedWindows` counts under its own name. The top level is one more window, named by
+    `rateLimitType`: a rejection with a readable `resetsAt` marks that limit reached; otherwise it counts only
+    when no window of that name did (the shape the public reference documents). An unreadable window gives
+    no figure and leaves the others. [] for any other event. Never raises.
+    """
+    if not isinstance(event, dict) or event.get("type") != "rate_limit_event":
+        return []
+    info = event.get("rate_limit_info")
+    if not isinstance(info, dict):
+        return []
+    figures: dict[str, dict] = {}
+    windows = info.get("unifiedWindows")
+    for name, window in (windows.items() if isinstance(windows, dict) else ()):
+        if isinstance(name, str) and name and isinstance(window, dict):
+            figure = _window_figure(name, window)
+            if figure:
+                figures[name] = figure
+    name = info.get("rateLimitType")
+    if isinstance(name, str) and name:
+        resets_at = _epoch(info.get("resetsAt"))
+        if info.get("status") == "rejected" and resets_at:
+            used = (figures.get(name) or {}).get("used")
+            if used is None:
+                used = _share(info.get("utilization"))
+            figures[name] = {"limit": name, "used": used, "resets_at": resets_at, "reached": True}
+        elif name not in figures:
+            figure = _window_figure(name, info)
+            if figure:
+                figures[name] = figure
+    return list(figures.values())
+
+
+def _window_figure(name: str, window: dict) -> dict | None:
+    used, resets_at = _share(window.get("utilization")), _epoch(window.get("resetsAt"))
+    reached = window.get("status") == "rejected"
+    if resets_at is None or (used is None and not reached):
+        return None
+    return {"limit": name, "used": used, "resets_at": resets_at, "reached": reached}
 
 
 def session_tokens(before: dict[str, int] | None, reported: dict[str, int] | None) -> dict[str, int] | None:

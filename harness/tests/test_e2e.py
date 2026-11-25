@@ -8,6 +8,7 @@ decision file and release gates with HARNESS_GATE_RELEASE.
 
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -618,6 +619,29 @@ def test_usage_limit_waits_then_continues_the_same_session(root, monkeypatch):
     assert "${" not in resumed
     # the stopped process reported 2,000 tokens, the continued one 1,000: a lower figure is added, not a running total
     assert exe["tokens"] == {kind: 3 * n for kind, n in TOKENS_1000.items()}
+    # the rejection is also the account's 5-hour figure for AgentHub's header, reached until its reset
+    [five_hour] = st["usage"]
+    assert (five_hour["limit"], five_hour["reached"], five_hour["used"]) == ("five_hour", True, None)
+    assert before + 3600 - 1 <= five_hour["resets_at"] <= time.time() + 3600
+
+
+def test_steps_write_the_accounts_limits_into_the_state(root, monkeypatch):
+    # Constraint: AgentHub's header shows the limits a run's steps report, read from state.json while the run
+    #             lives (AC5); one figure per limit, a fable session's Week and Fable week together (AC14).
+    # Input: every step's stream carries the two-window rate_limit_event of a fable session (0.22 and 0.37)
+    # Expected output: the run ends done; state.json `usage` holds both limits with their shares, the event's
+    #                  reset time, not reached, and a read_at in the state's time format
+    resets_at = int(time.time()) + 4 * 86400
+    windows = {"seven_day": {"utilization": 0.22, "resetsAt": resets_at, "status": "allowed"},
+               "seven_day_overage_included": {"utilization": 0.37, "resetsAt": resets_at, "status": "allowed"}}
+    info = {"status": "allowed", "resetsAt": resets_at, "rateLimitType": "seven_day", "unifiedWindows": windows}
+    _scenario(root, monkeypatch, {"triage": ["done"], "rate_limit_info": info})
+    st = _run(root)
+    assert st.status == "done", st.get("error")
+    usage = {f["limit"]: f for f in st["usage"]}
+    assert {k: (f["used"], f["resets_at"], f["reached"]) for k, f in usage.items()} == {
+        "seven_day": (0.22, resets_at, False), "seven_day_overage_included": (0.37, resets_at, False)}
+    assert all(re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", f["read_at"]) for f in usage.values())
 
 
 def test_usage_limit_in_pause_mode_ends_the_run_and_resume_continues_the_session(root, monkeypatch):
