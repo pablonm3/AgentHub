@@ -88,7 +88,7 @@ def _valid(figure: object) -> bool:
     reached = figure.get("reached")
     if not (isinstance(limit, str) and limit and isinstance(reached, bool) and isinstance(figure.get("read_at"), str)):
         return False
-    # The parser's rules for a readable share and reset time; a stored reset time is the int it gives.
+    # Same checks as the stream parser; a stored reset time must be the int `readable_epoch` returns.
     if not (isinstance(resets_at, int) and readable_epoch(resets_at)):
         return False
     if used is None:

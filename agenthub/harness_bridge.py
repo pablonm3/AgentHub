@@ -199,7 +199,7 @@ class HarnessBridge:
         return bool(changed)
 
     def refresh_usage(self, run_id: str) -> bool:
-        """The account's limits the run's steps reported (state.json `usage`) to the server's figures. Idempotent."""
+        """Record the figures the run's steps wrote to state.json `usage`; True when one changed. Idempotent."""
         state = self._read_state(run_id)
         return bool(state) and self.hub.usage.record(state.get("usage"))
 
