@@ -13,7 +13,7 @@ import threading
 import time
 from typing import TYPE_CHECKING
 
-from harness.claude_runner import limit_usage
+from harness.claude_runner import limit_usage, readable_epoch, readable_share
 
 from .db import now_iso
 
@@ -33,15 +33,14 @@ class Usage:
         self._lock = threading.Lock()
 
     def record(self, figures: object) -> bool:
-        """Keep each well-formed figure whose limit has none stored, or has a different one not read later.
+        """Keep each well-formed figure that replaces the stored one of its limit (see `_replaces`).
         True when one was kept: the row is written and topic `usage` published once."""
         incoming = [_clean(f) for f in figures if _valid(f)] if isinstance(figures, list) else []
         with self._lock:
             stored = self._stored()
             kept = dict(stored)
             for figure in incoming:
-                old = kept.get(figure["limit"])
-                if old is None or (figure != old and figure["read_at"] >= old["read_at"]):
+                if _replaces(figure, kept.get(figure["limit"])):
                     kept[figure["limit"]] = figure
             if kept == stored:
                 return False
@@ -75,6 +74,12 @@ class Usage:
         return {f["limit"]: _clean(f) for f in rows if _valid(f)}
 
 
+def _replaces(new: dict, old: dict | None) -> bool:
+    """True for a first figure of its limit, or a changed one read no earlier than the stored one
+    (an unchanged re-read of state.json every 2 s does not count, so nothing is written or published)."""
+    return old is None or (new != old and new["read_at"] >= old["read_at"])
+
+
 def _valid(figure: object) -> bool:
     """A figure with the five fields well formed; it may come from another process's state.json."""
     if not isinstance(figure, dict):
@@ -83,11 +88,12 @@ def _valid(figure: object) -> bool:
     reached = figure.get("reached")
     if not (isinstance(limit, str) and limit and isinstance(reached, bool) and isinstance(figure.get("read_at"), str)):
         return False
-    if isinstance(resets_at, bool) or not isinstance(resets_at, int) or resets_at <= 0:
+    # The parser's rules for a readable share and reset time; a stored reset time is the int it gives.
+    if not (isinstance(resets_at, int) and readable_epoch(resets_at)):
         return False
     if used is None:
         return reached
-    return not isinstance(used, bool) and isinstance(used, (int, float)) and 0 <= used <= 1
+    return readable_share(used) is not None
 
 
 def _clean(figure: dict) -> dict:

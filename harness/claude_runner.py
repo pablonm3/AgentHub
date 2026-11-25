@@ -157,13 +157,13 @@ def _real(value: object) -> int | float | None:
     return None
 
 
-def _share(value: object) -> float | None:
+def readable_share(value: object) -> float | None:
     """A readable `utilization`: a real number from 0 to 1."""
     n = _real(value)
     return float(n) if n is not None and 0 <= n <= 1 else None
 
 
-def _epoch(value: object) -> int | None:
+def readable_epoch(value: object) -> int | None:
     """A readable `resetsAt`: a real number of epoch seconds above 0."""
     n = _real(value)
     return int(n) if n is not None and n > 0 else None
@@ -190,23 +190,35 @@ def limit_usage(event: object) -> list[dict]:
             figure = _window_figure(name, window)
             if figure:
                 figures[name] = figure
-    name = info.get("rateLimitType")
-    if isinstance(name, str) and name:
-        resets_at = _epoch(info.get("resetsAt"))
-        if info.get("status") == "rejected" and resets_at:
-            used = (figures.get(name) or {}).get("used")
-            if used is None:
-                used = _share(info.get("utilization"))
-            figures[name] = {"limit": name, "used": used, "resets_at": resets_at, "reached": True}
-        elif name not in figures:
-            figure = _window_figure(name, info)
-            if figure:
-                figures[name] = figure
+    figure = _top_level_figure(info, figures)
+    if figure:
+        figures[figure["limit"]] = figure
     return list(figures.values())
 
 
+def _top_level_figure(info: dict, from_windows: dict[str, dict]) -> dict | None:
+    """The figure of the limit `rateLimitType` names, read from the top level of the event.
+
+    - rejected with a readable `resetsAt`: that limit is reached; its share comes from the window of the
+      same name when that window had one, else from the top level.
+    - otherwise: the top level counts as a window only when no window of that name gave a figure.
+    """
+    name = info.get("rateLimitType")
+    if not (isinstance(name, str) and name):
+        return None
+    resets_at = readable_epoch(info.get("resetsAt"))
+    if info.get("status") == "rejected" and resets_at:
+        used = (from_windows.get(name) or {}).get("used")
+        if used is None:
+            used = readable_share(info.get("utilization"))
+        return {"limit": name, "used": used, "resets_at": resets_at, "reached": True}
+    if name in from_windows:
+        return None
+    return _window_figure(name, info)
+
+
 def _window_figure(name: str, window: dict) -> dict | None:
-    used, resets_at = _share(window.get("utilization")), _epoch(window.get("resetsAt"))
+    used, resets_at = readable_share(window.get("utilization")), readable_epoch(window.get("resetsAt"))
     reached = window.get("status") == "rejected"
     if resets_at is None or (used is None and not reached):
         return None
