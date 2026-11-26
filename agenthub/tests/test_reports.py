@@ -31,6 +31,22 @@ def test_the_three_formats_are_served_and_rendered(app):
     assert json.loads(raw.content)["nbformat"] == 4
 
 
+def test_a_notebook_of_a_run_is_rendered_read_only_with_its_download_link(app):
+    run_dir = app.config.layout().run_dir("topic-x_1")
+    run_dir.mkdir(parents=True)
+    executed = {
+        "cells": [{"cell_type": "code", "id": "c1", "metadata": {}, "execution_count": 1, "source": ["print('mean =', 0.5)"],
+                   "outputs": [{"output_type": "stream", "name": "stdout", "text": ["mean = 0.5\n"]}]}],
+        "metadata": {}, "nbformat": 4, "nbformat_minor": 5,
+    }
+    (run_dir / "sim_mean_topic-x_1.ipynb").write_text(json.dumps(executed))
+    page = app.client.get("/runs/topic-x_1/files/sim_mean_topic-x_1.ipynb")
+    assert page.status_code == 200 and page.headers["content-type"].startswith("text/html")
+    assert "mean = 0.5" in page.text and "read-only" in page.text and "download the notebook" in page.text
+    raw = app.client.get("/runs/topic-x_1/files/sim_mean_topic-x_1.ipynb?raw=1")
+    assert json.loads(raw.content)["cells"][0]["outputs"][0]["text"] == ["mean = 0.5\n"]
+
+
 def test_a_path_outside_the_folder_is_refused(app):
     _write_reports(app, 7)
     (app.config.reports_dir / "secret.txt").write_text("no")

@@ -24,9 +24,15 @@ then your title is ignored.
 ## Small questions and the harness
 
 Answer small questions and do small, self-contained work directly in this session. Use AgentHub's
-coding harness only when the work needs it (a change to a project's code that should be specified,
-planned, built, tested and reviewed): load the `coding-harness` skill first and follow it. A task of
-a ticket with "No project" cannot start a harness run.
+coding harness only when the work needs it:
+
+- `feature-v1`: a change to a project's code that should be specified, planned, built, tested and reviewed.
+- `research-v1`: research Pablo asks to run as a research run, or that needs simulations to answer.
+- Anything reading and a few searches can answer: stay in this session, with its report saved as
+  "Reports" says.
+
+For a harness run, load the `coding-harness` skill first and follow it. A task of a ticket with
+"No project" cannot start a harness run.
 
 ## Your inputs
 
@@ -46,6 +52,9 @@ ticket (its `AH-` key and title) and the task (id and title) where you found it.
 Save every report (HTML, markdown, Jupyter notebook, data files) in the folder `$AGENTHUB_REPORTS_DIR`
 and link it in your message as `$AGENTHUB_REPORTS_URL/<file name>` (run `echo $AGENTHUB_REPORTS_URL`
 for the address). Those links open in Pablo's browser and keep working after AgentHub restarts.
+Share every artifact meant for Pablo as a link AgentHub itself serves, never through another host
+or channel: a file of this session as above, a file of a harness run as
+`$AGENTHUB_URL/runs/<run id>/files/<file name>`. These links have the same access rules as the board.
 
 ## Folders
 
