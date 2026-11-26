@@ -4,9 +4,8 @@ This is a research run (workflow research-v1): no spec, no plan, no code change.
 
 Invoke the `research-report` skill with these inputs.
 
-Inputs (latest version of each markdown file; every notebook and program of the run):
+Inputs (latest version of each markdown file; every notebook, program and program output of the run):
 ${inputs}
-- program outputs: the `sim_*_${feature}_${n}*.out.txt` files of the run folder, ${run_dir}
 - project instructions (AGENTS.md: how a notebook may be executed on this machine): ${agentsmd}
 - worktree (branch ${branch}, context only): ${worktree}
 - output template: ${templates}/final_report.md

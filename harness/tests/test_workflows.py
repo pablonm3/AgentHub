@@ -31,9 +31,8 @@ def _git(args, cwd) -> str:
     return out.stdout.strip()
 
 
-@pytest.fixture
-def research_root(tmp_path, monkeypatch):
-    """A scratch harness root holding research-v1, a project `demo` whose repo has a dependency file, and a ticket."""
+def _bare_remote(tmp_path: Path) -> Path:
+    """A bare remote on branch `dev` whose repo holds a README and a pyproject.toml."""
     seed, remote = tmp_path / "seed", tmp_path / "remote.git"
     seed.mkdir()
     (seed / "README.md").write_text("demo\n")
@@ -42,8 +41,11 @@ def research_root(tmp_path, monkeypatch):
     _git(["add", "."], seed)
     _git(["commit", "-q", "-m", "init"], seed)
     _git(["clone", "-q", "--bare", str(seed), str(remote)], tmp_path)
+    return remote
 
-    r = tmp_path / "harness"
+
+def _scratch_harness(r: Path, remote: Path) -> None:
+    """Lay out and commit a harness root at `r`: research-v1, project `demo` on `remote`, and a ticket."""
     for d in ("tickets", "runs", "workflow_logs", "archived", "agentmds/demo", "skills/general", "skills/projects/demo"):
         (r / d).mkdir(parents=True)
     shutil.copytree(REPO / "workflows" / "research-v1", r / "workflows" / "research-v1")
@@ -60,6 +62,13 @@ def research_root(tmp_path, monkeypatch):
     _git(["init", "-q"], r)
     _git(["add", "."], r)
     _git(["commit", "-q", "-m", "scratch harness"], r)
+
+
+@pytest.fixture
+def research_root(tmp_path, monkeypatch):
+    """A scratch harness root holding research-v1, a project `demo` whose repo has a dependency file, and a ticket."""
+    r = tmp_path / "harness"
+    _scratch_harness(r, _bare_remote(tmp_path))
 
     # inside a harness step the three roots point at the live harness: all three must move to the scratch root
     for var in ("HARNESS_ROOT", "HARNESS_PRIVATE_ROOT", "HARNESS_DATA_ROOT"):

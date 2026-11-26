@@ -63,6 +63,7 @@ steps:
       answers: "runs/${run_id}/answers_${feature}_${n}*.md"
       notebooks: "runs/${run_id}/*_${feature}_${n}*.ipynb"   # every notebook of the run, so the run log lists them
       programs: "runs/${run_id}/*_${feature}_${n}*.py"
+      program_outputs: "runs/${run_id}/sim_*_${feature}_${n}*.out.txt"
     writes:
       final_report: "runs/${run_id}/final_report_${feature}_${n}${v}.md"
       # plus final_report_${feature}_${n}.ipynb only when the report needs a notebook

@@ -24,12 +24,15 @@ then your title is ignored.
 ## Small questions and the harness
 
 Answer small questions and do small, self-contained work directly in this session. Use AgentHub's
-coding harness only when the work needs it: a change to a project's code that should be specified,
-planned, built, tested and reviewed (workflow `feature-v1`), or research that Pablo asks to run as a
-research run or that needs simulations to answer (workflow `research-v1`: web context, notebooks or
-programs with simulations, a reviewed final report). Research that reading and a few searches can
-answer stays in this session, with its report saved as "Reports" says. Load the `coding-harness`
-skill first and follow it. A task of a ticket with "No project" cannot start a harness run.
+coding harness only when the work needs it:
+
+- `feature-v1`: a change to a project's code that should be specified, planned, built, tested and reviewed.
+- `research-v1`: research Pablo asks to run as a research run, or that needs simulations to answer.
+- Anything reading and a few searches can answer: stay in this session, with its report saved as
+  "Reports" says.
+
+For a harness run, load the `coding-harness` skill first and follow it. A task of a ticket with
+"No project" cannot start a harness run.
 
 ## Your inputs
 
