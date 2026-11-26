@@ -19,7 +19,7 @@ the run's gates reach Pablo as comments.
 | `agenthub/prompts/` | the AI users' rules, their starting role prompts, and the first-message templates |
 | `agenthub/tests/` | pytest suite with a fake `claude` and a fake `gh`; `serve_fake.py` starts the app in fake mode |
 | `web/` | the UI (React, Vite, TypeScript), built to `web/dist` and served by the server |
-| `harness/`, `workflows/`, `skills/general/`, `agentmds/GENERAL.md`, `docs/WORKFLOW_SPEC.md`, `observability/otel.env` | the harness copy: orchestrator, workflows `feature-v1` and `regression-v1`, the harness skills and rules |
+| `harness/`, `workflows/`, `skills/general/`, `agentmds/GENERAL.md`, `docs/WORKFLOW_SPEC.md`, `observability/otel.env` | the harness copy: orchestrator, workflows `feature-v1`, `regression-v1` and `research-v1`, the harness skills and rules |
 | `skills/agents/` | the AI users' shared skills: `search-history` (search tickets, comments and task chats, archived ones included) and `coding-harness` |
 | `scripts/check_public_tree.py` | fails when a tracked file holds private content; run it before every commit |
 | `deploy/`, `.github/workflows/deploy.yml` | tests on every push, and the deploy of a copy installed on a server on every push to `main` (see Deployment) |

@@ -105,6 +105,36 @@ def test_no_project_ticket_refuses_a_run(live, env):
     assert not live.config.layout().run_dir("free-run_1").exists()
 
 
+def test_a_task_runs_a_research_run_and_is_told_its_final_report(live, env):
+    env.scenario(turns=[{"commands": [_start_command("topic-x", "--workflow research-v1")], "message": "Started the run."}])
+    ticket = live.ticket("Queue waits", "How long is the wait at load 0.8?", assignee="data_scientist", project="demo")
+    task_id = ticket["tasks"][0]["id"]
+    row = wait_for(lambda: _run_row(live, "topic-x_1"), 60, "the run row")
+    assert row["workflow"] == "research-v1" and row["project"] == "demo"
+
+    def told_the_report():
+        notices = [e["text"] for e in live.task(task_id)["events"] if e["kind"] == "notice"]
+        return next((n for n in notices if "Harness run topic-x_1 finished" in n), None)
+    notice = wait_for(told_the_report, 120, "the notice that the research run finished")
+    assert "final_report_topic-x_1.md" in notice
+    row = _run_row(live, "topic-x_1")
+    assert row["status"] == "done" and not row["pending_kind"]
+    layout = live.config.layout()
+    state = json.loads(layout.state_file("topic-x_1").read_text())
+    assert state["workflow"] == "research-v1" and not state.get("gates")
+    launch = json.loads((layout.run_log_dir("topic-x_1") / "21.jsonl").read_text().splitlines()[0])
+    assert launch["argv"][launch["argv"].index("--model") + 1] == "opus"
+    assert live.wait_task(task_id)["status"] != "running"
+
+
+def test_an_unknown_workflow_is_refused(app):
+    t = app.ticket("On demo", assignee="pablo", project="demo")
+    task = app.hub.tasks.create("engineer", "opus", "x", ticket_id=t["id"], origin="assignment")
+    with pytest.raises(BridgeRefused, match="unknown workflow 'nope-v1'"):
+        app.hub.bridge.start(app.hub.tasks.get(task["id"]), "feat-a", "text", workflow="nope-v1")
+    assert app.hub.db.all("SELECT * FROM harness_runs") == []
+
+
 def test_project_rules_of_start(app):
     t = app.ticket("On demo", assignee="pablo", project="demo")
     on_demo = app.hub.tasks.create("engineer", "opus", "x", ticket_id=t["id"], origin="assignment")

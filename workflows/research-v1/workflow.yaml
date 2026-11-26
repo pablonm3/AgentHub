@@ -1,0 +1,73 @@
+# research-v1 — research on a topic (docs/WORKFLOW_SPEC.md section 11)
+#
+# Takes a ticket holding a topic and questions, gathers context from the web, tries to answer the
+# questions with notebooks or programs that run simulations, then reviews the answers and writes a
+# final report. No spec, plan, build, gates, commit or push: the worktree is only a working folder.
+#
+# Ids 1, 2 and 18 mean what they mean in feature-v1. The three research skills are new, so their
+# steps get ids no other workflow uses (20, 21, 22): telemetry and notes that name a step id keep
+# meaning one skill. Notebooks and programs are not declared outputs (their number is not known in
+# advance and a declared output must exist); the answers file names them, and step 22 reads them.
+# Placeholders as in feature-v1/workflow.yaml.
+
+name: research-v1
+
+groups:
+  - { name: intake,   steps: ["1", "2"] }
+  - { name: research, steps: ["20", "21"] }
+  - { name: finish,   steps: ["22", "18"] }
+
+setup_chat_prompt: prompts/02-setup-chat.md
+# sent to a step's own session when it stopped unfinished (usage limit, missing output, failure): 5.8
+continue_prompt: prompts/continue-step.md
+
+steps:
+  - id: "1"
+    label: ticket
+    actor: human
+    display: "tickets/${feature}.md"
+
+  - id: "2"
+    label: start
+    actor: orchestrator
+    action: start_run
+    display: "worktrees/${project}/${run_id}"
+
+  - id: "20"
+    skill: research-context
+    label: research-context
+    prompt: prompts/20-research-context.md
+    reads:
+      ticket: "runs/${run_id}/ticket_${feature}_${n}*.md"
+    writes:
+      research_context: "runs/${run_id}/research_context_${feature}_${n}${v}.md"
+
+  - id: "21"
+    skill: research-answers
+    label: research-answers
+    prompt: prompts/21-research-answers.md
+    reads:
+      ticket: "runs/${run_id}/ticket_${feature}_${n}*.md"
+      research_context: "runs/${run_id}/research_context_${feature}_${n}*.md"
+    writes:
+      answers: "runs/${run_id}/answers_${feature}_${n}${v}.md"
+      # also leaves sim_<short-name>_${feature}_${n}.ipynb | .py | .out.txt in the run folder
+
+  - id: "22"
+    skill: research-report
+    label: research-report
+    prompt: prompts/22-research-report.md
+    reads:
+      ticket: "runs/${run_id}/ticket_${feature}_${n}*.md"
+      research_context: "runs/${run_id}/research_context_${feature}_${n}*.md"
+      answers: "runs/${run_id}/answers_${feature}_${n}*.md"
+      notebooks: "runs/${run_id}/*_${feature}_${n}*.ipynb"   # every notebook of the run, so the run log lists them
+      programs: "runs/${run_id}/*_${feature}_${n}*.py"
+    writes:
+      final_report: "runs/${run_id}/final_report_${feature}_${n}${v}.md"
+      # plus final_report_${feature}_${n}.ipynb only when the report needs a notebook
+
+  - id: "18"
+    label: run log
+    actor: orchestrator
+    action: run_log

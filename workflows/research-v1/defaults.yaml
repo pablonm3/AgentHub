@@ -1,0 +1,36 @@
+# research-v1 tunables (docs/WORKFLOW_SPEC.md 5.4 and 11).
+# Override per run: agenthub-harness run research-v1 <feature> --set simulation_timeout_min=40
+# Override for every run of one project: `defaults:` under the project in harness.yaml (`--set` still wins).
+# The effective values are copied into runs/<run-id>/state.json.
+
+max_iterations: 1                       # no loop in this workflow; shown as "iteration 1/1"
+proposed_questions_max: 3               # questions step 20 may add to the ticket's own, marked `proposed`
+simulation_timeout_min: 20              # minutes one notebook cell or one program run may take in step 21
+
+auth: account                           # account (logged-in Claude Code credential) | api_key (ANTHROPIC_API_KEY)
+on_question: pause                      # pause (record the question in a decision file and stop; AgentHub surfaces it) | chat (terminal chat); only a failed setup command asks anything in this workflow
+on_rate_limit: wait                     # wait (sleep until the usage limit resets, then continue the step in its session) | pause (end the run; `agenthub-harness resume` continues it)
+step_continuations: 3                   # times one step execution may be continued in its own session after it stopped unfinished; 0 = always start the step over
+
+permission_mode: bypassPermissions      # claude -p permission mode for autonomous steps; the write boundary is enforced separately
+chat_permission_mode: auto              # the setup-failure chat
+
+model:                                  # Claude model per step (alias or full id, passed to `claude --model`)
+  default: opus                         # the setup-failure chat
+  steps:
+    "20": fable                         # research-context
+    "21": opus                          # research-answers
+    "22": fable                         # research-report
+
+effort:                                 # reasoning effort per step: low | medium | high | xhigh | max (CLAUDE_CODE_EFFORT_LEVEL, see feature-v1)
+  default: medium                       # the setup-failure chat keeps your own setting
+  steps:
+    "20": high                          # research-context
+    "21": xhigh                         # research-answers: designing and checking the simulations
+    "22": high                          # research-report
+
+timeouts:                               # minutes per step; a step past its timeout fails the run
+  default: 90
+  "21": 240                             # several simulations of up to simulation_timeout_min each
+
+max_budget_usd: null                    # --max-budget-usd per step when auth is api_key; null = no cap
