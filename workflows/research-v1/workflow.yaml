@@ -4,7 +4,7 @@
 # questions with notebooks or programs that run simulations, then reviews the answers and writes a
 # final report. No spec, plan, build, gates, commit or push: the worktree is only a working folder.
 #
-# Ids 1, 2 and 18 mean what they mean in feature-v1. The three research skills are new, so their
+# Ids 1, 2 and 18 mean what they mean in feature-v1. The research skills run only here, so their
 # steps get ids no other workflow uses (20, 21, 22): telemetry and notes that name a step id keep
 # meaning one skill. Notebooks and programs are not declared outputs (their number is not known in
 # advance and a declared output must exist); the answers file names them, and step 22 reads them.
