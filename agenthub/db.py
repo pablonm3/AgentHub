@@ -47,13 +47,13 @@ class Database:
             self._seed(conn)
             conn.execute(f"PRAGMA user_version = {VERSION}")
         else:
-            self._add_project_chosen()
+            self._ensure_project_chosen_column()  # runs on every open; a no-op once the column exists
 
-    def _add_project_chosen(self) -> None:
-        """Give a file from before tickets.project_chosen the column; its tickets all count as chosen (default 1).
+    def _ensure_project_chosen_column(self) -> None:
+        """Add tickets.project_chosen to an existing file that lacks it (its tickets count as chosen, default 1).
 
-        Decided by the column, not by user_version: another branch numbers its own migrations, and a file it
-        moved to version 2 has no column.
+        Checked by column presence on every open, because user_version is not a reliable marker: files exist
+        past version 1 without the column.
         """
         with self.transaction() as conn:
             if "project_chosen" not in {row["name"] for row in conn.execute("PRAGMA table_info(tickets)")}:
