@@ -355,24 +355,28 @@ class HarnessBridge:
         answering = [e for e in events if self._answers_gate(task, e)] if gate else []
         if not answering:
             return ""
-        run_id, decision = gate["run_id"], gate["pending_decision_file"]
+        run_id = gate["run_id"]
         pending = pending_question(self.layout, run_id) or {}
-        what = f"the pending gate of harness run {run_id} ({pending.get('reason') or 'gate'})"
-        if all(e["kind"] == "user" for e in answering):
-            head = f"Pablo's reply below answers {what}. Decision file: {decision}. Record his answer"
-        else:
-            parent = self.hub.tasks.sender_name(task["parent_task_id"])
-            by_pablo_too = any(e["kind"] == "user" for e in answering)
-            who = f"{parent}'s and Pablo's replies below answer" if by_pablo_too else f"The reply of {parent} below answers"
-            head = (
-                f"{who} {what}. This task's gates are answered by {parent}, the task that gave you this work: where the "
-                "gate's instructions say \"the human\" or \"Pablo\", its reply is the answer to record. "
-                f"Decision file: {decision}. Record the answer"
-            )
-        return (
-            f"{head} in that file as the gate's instructions say, then run `agenthub harness resume {run_id}`."
-            f"\n\nThe gate's instructions:\n\n{pending.get('chat_prompt') or ''}\n\n---\n\n"
+        head = self._gate_reply_head(task, answering, gate, pending.get("reason") or "gate")
+        return f"{head}\n\nThe gate's instructions:\n\n{pending.get('chat_prompt') or ''}\n\n---\n\n"
+
+    def _gate_reply_head(self, task: dict, answering: list[dict], gate: dict, reason: str) -> str:
+        """What the AI user is told to do with replies to its gate: by Pablo only, by the parent only, or by both."""
+        run_id, decision = gate["run_id"], gate["pending_decision_file"]
+        what = f"the pending gate of harness run {run_id} ({reason})"
+        record = f"in that file as the gate's instructions say, then run `agenthub harness resume {run_id}`."
+        by_pablo = [e["kind"] == "user" for e in answering]
+        if all(by_pablo):
+            return f"Pablo's reply below answers {what}. Decision file: {decision}. Record his answer {record}"
+        parent = self.hub.tasks.sender_name(task["parent_task_id"])
+        parent_rule = (
+            f"This task's gates are answered by {parent}, the task that gave you this work: where the gate's "
+            f"instructions say \"the human\" or \"Pablo\", its reply is the answer to record. "
+            f"Decision file: {decision}. Record the answer {record}"
         )
+        if any(by_pablo):
+            return f"{parent}'s and Pablo's replies below answer {what}. {parent_rule}"
+        return f"The reply of {parent} below answers {what}. {parent_rule}"
 
     def has_live_run(self, task_id: int) -> bool:
         return any(

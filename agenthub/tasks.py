@@ -7,6 +7,7 @@ event without a turn is queued and becomes part of the next turn. One turn runs 
 A task created by another task's session (origin `ai_user`) has that task as its parent and answers
 to it while the parent is not archived (`answers_to`): its questions and its result go to the parent,
 and while it waits it waits on the parent's AI user, not on Pablo.
+The turn status `waiting_on_child` is stored as `waiting_on_user` with `waiting_on_task_id` set.
 """
 
 from __future__ import annotations
@@ -114,9 +115,11 @@ class Tasks:
         """The task a waiting task waits on; None when it waits on Pablo or is not waiting."""
         if row["status"] != "waiting_on_user":
             return None
-        awaited = self.get(row["waiting_on_task_id"]) if row["waiting_on_task_id"] else None  # a parent's own statement
-        awaited = awaited or self.answers_to(row)  # a waiting child waits on its parent, whatever made it wait
-        return {"task_id": awaited["id"], "ai_user_id": awaited["ai_user_id"]} if awaited else None
+        if row["waiting_on_task_id"] and (child := self.get(row["waiting_on_task_id"])):
+            return {"task_id": child["id"], "ai_user_id": child["ai_user_id"]}  # the parent said waiting_on_child
+        if parent := self.answers_to(row):
+            return {"task_id": parent["id"], "ai_user_id": parent["ai_user_id"]}  # a waiting child waits on its parent
+        return None
 
     def ref(self, task_id: int) -> dict | None:
         """How a task is named where another task, a comment or a ticket points at it."""
@@ -536,7 +539,7 @@ class Tasks:
                 else:
                     reason = outcome.error or "the turn failed"
                     self.add_event(task_id, "error", reason, turn_id=active.turn_id)
-            report = self._report_kind(task_id, active, outcome, structured, reply)
+            parent_hears = self._what_parent_hears(task_id, active, outcome, structured, reply)
         task = self.get(task_id)
         sync = self.hub.private.sync(f"task {task_id} ({self.db.user(task['ai_user_id'])['name']}): {task['title'] or ''}".strip())
         if sync.error:
@@ -545,13 +548,13 @@ class Tasks:
         with self.lock:
             self._active.pop(task_id, None)
             self._next_status_after_turn(task_id, active, outcome, structured, reason)
-        if report:
-            self.hub.children.report(self.get(task_id), reply, report)
+        if parent_hears:
+            self.hub.children.report(self.get(task_id), reply, parent_hears)
         self._publish(task_id)
         self.hub.events.publish("tickets")
         self.hub.events.publish("activity")
 
-    def _report_kind(self, task_id: int, active: ActiveTurn, outcome: TurnOutcome, structured: dict | None, reply: str) -> str | None:
+    def _what_parent_hears(self, task_id: int, active: ActiveTurn, outcome: TurnOutcome, structured: dict | None, reply: str) -> str | None:
         """What this turn's message is for the task's parent: `question`, `result` or nothing. Called with the lock held."""
         if not reply or active.stopped or not outcome.ok:
             return None  # a stopped or failed turn tells nobody
@@ -560,7 +563,9 @@ class Tasks:
         stated = structured["status"] if structured else "waiting_on_user"  # the status the turn ends with
         if stated == "waiting_on_user" or self.hub.bridge.pending_gate(task_id):
             return "question"  # a task cannot be done while its gate waits
-        return "result" if stated == "done" else None  # waiting_on_child: a progress note
+        if stated == "done":
+            return "result"
+        return None  # waiting_on_child: a progress note, not sent
 
     def _next_status_after_turn(self, task_id: int, active: ActiveTurn, outcome: TurnOutcome, structured: dict | None, reason: str | None) -> None:
         """Pick the task's status once its turn has ended. Called with the lock held."""

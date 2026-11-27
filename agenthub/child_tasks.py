@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from .errors import HubError
 from .tasks import ticket_key
+from .tickets import render
 
 if TYPE_CHECKING:
     from .hub import Hub
@@ -27,25 +28,14 @@ class ChildTasks:
         receiver = self._receiver(parent, to)
         if not request.strip():
             raise HubError("the request is empty: say what you need from the other AI user", 422)
-        asker = self.db.user(parent["ai_user_id"])
         tasks, tickets = self.hub.tasks, self.hub.tickets
         if not parent["ticket_id"]:
-            child = tasks.create(
-                receiver["id"], parent["model"], tickets.child_task_input(None, asker, parent, request),
-                origin="ai_user", first_kind="ai_user", parent_task_id=parent["id"],
-            )
-            return child, True
+            return self._new_child(parent, receiver, None, request), True
         ticket = tickets.get(parent["ticket_id"])
         with tickets.handing:
             existing = tasks.open_task(ticket["id"], receiver["id"])
             if existing is None:
-                child = tasks.create(
-                    receiver["id"], ticket["model"], tickets.child_task_input(ticket, asker, parent, request),
-                    ticket_id=ticket["id"], origin="ai_user", first_kind="ai_user", parent_task_id=parent["id"],
-                )
-                body = f"Created a task for {receiver['name']}:\n\n" + _quote(request)
-                tickets.post_ai_comment(ticket["id"], asker["id"], body, parent["id"], announces=child["id"])
-                return tasks.view(child["id"]), True
+                return self._new_child(parent, receiver, ticket, request), True
             if existing["parent_task_id"] == parent["id"]:
                 return tasks.send(existing["id"], request, kind="ai_user", from_task_id=parent["id"]), False
             title = tasks.view(existing["id"])["display_title"]
@@ -55,6 +45,20 @@ class ChildTasks:
                 "ticket: tell Pablo in your message.",
                 409,
             )
+
+    def _new_child(self, parent: dict, receiver: dict, ticket: dict | None, request: str) -> dict:
+        """Create the receiver's child task; on a ticket, also announce it there with a comment."""
+        tasks, tickets = self.hub.tasks, self.hub.tickets
+        asker = self.db.user(parent["ai_user_id"])
+        child = tasks.create(
+            receiver["id"], (ticket or parent)["model"], tickets.child_task_input(ticket, asker, parent, request),
+            ticket_id=ticket["id"] if ticket else None, origin="ai_user", first_kind="ai_user", parent_task_id=parent["id"],
+        )
+        if ticket is None:
+            return child
+        body = f"Created a task for {receiver['name']}:\n\n" + _quote(request)
+        tickets.post_ai_comment(ticket["id"], asker["id"], body, parent["id"], announces=child["id"])
+        return tasks.view(child["id"])
 
     def send(self, parent: dict, child_id: int, text: str) -> dict:
         """A message of the parent's session to one of its child tasks, stored as sent (AC11)."""
@@ -77,21 +81,13 @@ class ChildTasks:
         raise HubError(f"{to.strip() or 'nobody'} cannot be asked. AI users you can ask: " + ", ".join(u["handle"] for u in others), 422)
 
     # ================================================================ from the child, to its parent
-    def report(self, child: dict, message: str, what: str) -> bool:
+    def report(self, child: dict, message: str, kind: str) -> bool:
         """Send a child's question, result or gate to the task it answers to; False when it answers to nobody."""
         parent = self.hub.tasks.answers_to(child)
         if parent is None:
             return False
         name = self.db.user(child["ai_user_id"])["name"]
-        answer = f'answer with `agenthub task send {child["id"]} "<answer>"`'
-        rule = "yourself when Pablo's ticket, comments or messages already settle it; otherwise ask Pablo first and pass his answer on"
-        note = {
-            "question": f"{name} asks this from child task {child['id']} and waits for your answer: {answer}, {rule}.",
-            "result": f"This is the result of child task {child['id']} ({name}), which ended done. "
-                      f"It still takes messages: `agenthub task send {child['id']} \"<text>\"`.",
-            "gate": f"The harness run of child task {child['id']} ({name}) waits at this gate, and your reply releases it: "
-                    f"{answer}, {rule}. Pablo's reply in task {child['id']} releases it too.",
-        }[what]
+        note = render(f"child_report_{kind}.md", child_name=name, child_id=str(child["id"])).strip()
         try:
             self.hub.tasks.send(parent["id"], f"{message.strip()}\n\n> From AgentHub: {note}", kind="ai_user", from_task_id=child["id"])
         except HubError:
