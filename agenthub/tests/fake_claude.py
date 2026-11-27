@@ -9,7 +9,9 @@
 - `claude -p …` without `--json-schema` (a step of a harness run): handed to the harness's own fake.
 
 Scenario: `$AGENTHUB_FAKE_DIR/scenario.json`, read on every call. Top-level keys apply to every turn;
-`turns` is a list of per-call overrides consumed in call order (a counter file beside it):
+`turns` is a list of per-call overrides consumed in call order (a counter file beside it).
+`by_ai_user` maps an AI user's handle (`AGENTHUB_AI_USER`) to a scenario laid over the top-level keys
+for that AI user's calls only; a `turns` list inside it has its own counter (`scenario.counter.<handle>`):
   status                "waiting_on_user" (default) or "done"
   message, title        the structured output's fields (defaults: an echo of the input)
   sleep                 seconds to wait before answering (a turn to stop)
@@ -41,17 +43,26 @@ def fake_dir() -> Path:
     return d
 
 
+def _next_turn(sc: dict, counter: Path) -> dict:
+    """`sc` without its `turns`, with the next entry of `turns` laid over it."""
+    turns = sc.get("turns")
+    if not isinstance(turns, list):
+        return sc
+    i = int(counter.read_text()) if counter.exists() else 0
+    counter.write_text(str(i + 1))
+    base = {k: v for k, v in sc.items() if k != "turns"}
+    return {**base, **turns[i]} if i < len(turns) else base
+
+
 def scenario(d: Path) -> dict:
     path = d / "scenario.json"
     sc = json.loads(path.read_text()) if path.exists() else {}
-    turns = sc.get("turns")
-    if isinstance(turns, list):
-        counter = d / "scenario.counter"
-        i = int(counter.read_text()) if counter.exists() else 0
-        counter.write_text(str(i + 1))
-        if i < len(turns):
-            sc = {**{k: v for k, v in sc.items() if k != "turns"}, **turns[i]}
-    return sc
+    own = (sc.pop("by_ai_user", None) or {}).get(os.environ.get("AGENTHUB_AI_USER", ""))
+    if isinstance(own, dict):
+        handle = os.environ["AGENTHUB_AI_USER"]
+        top = {k: v for k, v in sc.items() if k != "turns"}
+        return {**top, **_next_turn(own, d / f"scenario.counter.{handle}")}
+    return _next_turn(sc, d / "scenario.counter")
 
 
 def arg(argv: list[str], name: str) -> str | None:

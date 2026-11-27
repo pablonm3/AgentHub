@@ -43,7 +43,23 @@ export interface GithubStatus {
 }
 
 export type TaskStatus = 'running' | 'waiting_on_user' | 'done' | 'archived'
-export type TaskOrigin = 'assignment' | 'mention' | 'manual'
+export type TaskOrigin = 'assignment' | 'mention' | 'manual' | 'ai_user'
+
+export interface TaskRef {
+  task_id: number
+  ai_user_id: string
+}
+
+/** How a task is named where another task, a comment or a ticket points at it. */
+export interface TaskLink {
+  id: number
+  ai_user_id: string
+  title: string | null
+  display_title: string
+  status: TaskStatus
+  /** The task it waits on (its parent, or the child it said it waits for); null: Pablo, or not waiting. */
+  waiting_on: TaskRef | null
+}
 
 export interface HarnessRun {
   run_id: string
@@ -71,11 +87,17 @@ export interface Task {
   session_tokens: number
   harness_tokens: number
   harness_runs: HarnessRun[]
+  /** The task that created this one; null when Pablo or AgentHub started it. */
+  parent: TaskLink | null
+  /** The tasks this one created, oldest first. */
+  children: TaskLink[]
+  waiting_on: TaskRef | null
   created_at: string
   updated_at: string
 }
 
-export type ChatEventKind = 'user' | 'notice' | 'assistant' | 'tool' | 'reply' | 'system' | 'error'
+/** `ai_user`: a message from another AI user's task (`from_task`), never Pablo's. */
+export type ChatEventKind = 'user' | 'notice' | 'ai_user' | 'assistant' | 'tool' | 'reply' | 'system' | 'error'
 
 export interface ChatEvent {
   id: number
@@ -84,15 +106,11 @@ export interface ChatEvent {
   created_at: string
   comment_id: number | null
   queued: boolean
+  from_task: TaskRef | null
 }
 
 export interface TaskDetail extends Task {
   events: ChatEvent[]
-}
-
-export interface TaskRef {
-  task_id: number
-  ai_user_id: string
 }
 
 export interface Comment {
@@ -105,6 +123,10 @@ export interface Comment {
   created_at: string
   delivered_to: TaskRef[]
   started: TaskRef[]
+  /** The child task this comment announces. */
+  child_task: TaskLink | null
+  /** 0 for a comment of a task that answered to another task when it was posted. */
+  in_activity: number
 }
 
 export interface Ticket {
@@ -120,6 +142,8 @@ export interface Ticket {
   labels: string[]
   comment_count: number
   task_status: TaskStatus | null
+  /** The AI user the newest task waits on; null: Pablo, or not waiting. */
+  task_waiting_on: string | null
   created_at: string
   updated_at: string
 }

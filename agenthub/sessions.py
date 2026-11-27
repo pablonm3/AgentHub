@@ -2,7 +2,8 @@
 
 A turn runs through the harness copy's `run_step` launcher. The first turn of a task creates the
 session; every later turn continues it with `--resume`. The turn ends with structured output
-(`TURN_SCHEMA`) that says what Pablo reads and whether the task waits on him or is done.
+(`TURN_SCHEMA`) that says what Pablo (or the parent task of a child task) reads and whether the task
+waits on him, waits on a child task it created, or is done.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from harness.observability import Observability
 from .config import Config
 
 PROMPTS = Path(__file__).parent / "prompts"
+TURN_STATUSES = ("waiting_on_user", "done", "waiting_on_child")  # waiting_on_child is stored as waiting_on_user
 
 TURN_SCHEMA = {
     "type": "object",
@@ -32,7 +34,7 @@ TURN_SCHEMA = {
     "properties": {
         "message": {"type": "string"},
         "title": {"type": "string"},
-        "status": {"enum": ["waiting_on_user", "done"]},
+        "status": {"enum": list(TURN_STATUSES)},
     },
 }
 
@@ -62,7 +64,7 @@ def clean_env(env: dict[str, str]) -> dict[str, str]:
 def valid_structured(value: Any) -> dict | None:
     if not isinstance(value, dict):
         return None
-    if not isinstance(value.get("message"), str) or value.get("status") not in ("waiting_on_user", "done"):
+    if not isinstance(value.get("message"), str) or value.get("status") not in TURN_STATUSES:
         return None
     return {"message": value["message"], "status": value["status"], "title": str(value.get("title") or "")}
 

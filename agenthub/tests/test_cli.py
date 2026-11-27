@@ -33,3 +33,11 @@ def test_cli_refuses_without_a_task_token(live, env):
     task = live.post("/api/tasks", {"ai_user_id": "devops", "message": "x", "model": "opus"})
     t = live.wait_task(task["id"])
     assert "refused (401)" in [e["text"] for e in t["events"] if e["kind"] == "reply"][-1]
+
+
+def test_task_create_refuses_without_a_task_token(live, env):
+    env.scenario(commands=["AGENTHUB_TASK_TOKEN=wrong agenthub task create --to DevOps check the deploy"])
+    task = live.post("/api/tasks", {"ai_user_id": "engineer", "message": "x", "model": "opus"})
+    t = live.wait_task(task["id"])
+    assert "refused (401): unknown task token" in [e["text"] for e in t["events"] if e["kind"] == "reply"][-1]
+    assert t["children"] == [] and len(live.get("/api/tasks")["tasks"]) == 1

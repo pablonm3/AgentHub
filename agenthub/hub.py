@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 
+from .child_tasks import ChildTasks
 from .config import Config
 from .db import Database
 from .events import Events
@@ -32,6 +33,7 @@ class Hub:
         self.reports = Reports(self)
         self.tasks = Tasks(self)
         self.tickets = Tickets(self)
+        self.children = ChildTasks(self)
         self.bridge = HarnessBridge(self)
 
     def start(self) -> None:

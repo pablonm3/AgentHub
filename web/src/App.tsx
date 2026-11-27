@@ -7,6 +7,7 @@ import TasksPage from './TasksPage'
 import TicketDialog from './TicketDialog'
 import type { UsageFigure } from './api'
 import { formatRelative } from './lib/format'
+import { waitsOnPablo } from './lib/taskStatus'
 import { formatResetTime, usageLines } from './lib/usage'
 import { closeTask, closeTicket, dismissNotice, setTab, startLive, useAppState, type Notice, type Tab } from './store'
 import { color, font } from './theme'
@@ -16,7 +17,7 @@ export default function App() {
   const s = useAppState()
   useEffect(() => startLive(), [])
 
-  const waiting = s.tasks.filter((t) => t.status === 'waiting_on_user').length
+  const waiting = s.tasks.filter(waitsOnPablo).length
 
   return (
     <div

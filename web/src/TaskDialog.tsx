@@ -1,21 +1,24 @@
 import { useState, type CSSProperties } from 'react'
-import { api, errorMessage, type ChatEvent, type Task, type TaskDetail, type TaskStatus, type User } from './api'
+import { api, errorMessage, type ChatEvent, type Task, type TaskDetail, type TaskLink, type TaskStatus, type User } from './api'
 import { formatRelative, formatTokens } from './lib/format'
+import { statusLabel } from './lib/taskStatus'
 import {
   applyTaskDetail,
   closeTask,
   findUser,
   loadTasks,
   notifyOnFailure,
+  openTask,
   refresh,
   runInBackground,
   serverNow,
   useAppState,
   useOpenTask,
+  userName,
   viewTicketOf,
 } from './store'
 import { dark, font } from './theme'
-import { Avatar, Button, CloseButton, Dialog, EditableTitle, Markdown, Select, StatusPill, Timer, TokenCounts } from './ui'
+import { Avatar, Button, CloseButton, Dialog, EditableTitle, Markdown, Select, TaskStatusPill, Timer, TokenCounts } from './ui'
 import { MicButton, useDictation } from './voice'
 
 /** One task's chat, opened from the Tasks page or from a ticket's Tasks block. */
@@ -62,7 +65,7 @@ export default function TaskDialog() {
         }}
       >
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px 10px' }}>
-          <StatusPill status={task.status} />
+          <TaskStatusPill task={task} />
           <span style={{ fontFamily: font.mono, fontSize: 12, lineHeight: '16px', color: dark.sub, overflowWrap: 'anywhere' }}>
             {[task.ticket_key ?? 'No ticket', user?.name ?? task.ai_user_id].join(' · ')}
           </span>
@@ -148,10 +151,57 @@ export default function TaskDialog() {
             ))}
           </div>
         )}
+        <TaskLinks task={task} />
       </div>
       <Chat task={task} events={detail?.events ?? null} user={user} handles={handles} />
       <MessageBox task={task} />
     </Dialog>
+  )
+}
+
+/** The parent this task answers to and the child tasks it created; each opens that task. */
+function TaskLinks({ task }: { task: Task }) {
+  const children = task.children ?? []
+  if (!task.parent && children.length === 0) return null
+  const link = (t: TaskLink, withPill: boolean) => (
+    <button
+      key={t.id}
+      type="button"
+      onClick={() => openTask(t.id)}
+      aria-label={`Open ${userName(t.ai_user_id)}'s task ${t.display_title}, ${statusLabel(t, userName)}`}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        minHeight: 28,
+        padding: '2px 8px',
+        border: `1px solid ${dark.line}`,
+        borderRadius: 8,
+        background: 'transparent',
+        color: dark.cmd,
+        fontSize: 12,
+        fontWeight: 600,
+      }}
+    >
+      {withPill && <TaskStatusPill task={t} small />}
+      {userName(t.ai_user_id)} · {t.display_title}
+    </button>
+  )
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, color: dark.sub }}>
+      {task.parent && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 10px' }}>
+          <span>Child of</span>
+          {link(task.parent, false)}
+        </div>
+      )}
+      {children.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 10px' }}>
+          <span>Child tasks</span>
+          {children.map((child) => link(child, true))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -174,7 +224,10 @@ function Chat({
   handles: string[]
 }) {
   const now = serverNow()
-  const hint = CHAT_HINT[task.status]
+  const hint =
+    task.status === 'waiting_on_user' && task.waiting_on
+      ? { ...CHAT_HINT.waiting_on_user, text: `waiting for ${userName(task.waiting_on.ai_user_id)}` }
+      : CHAT_HINT[task.status]
   return (
     // column-reverse keeps the view pinned to the newest message.
     <div
@@ -245,6 +298,29 @@ function ChatLine({ event, user, handles, now }: { event: ChatEvent; user: User 
               borderRadius: '12px 12px 4px 12px',
               background: dark.userBubble,
               border: `1px solid ${event.queued ? dark.ask : dark.cmd}`,
+              color: dark.bright,
+              opacity: event.queued ? 0.8 : 1,
+            }}
+          >
+            <Markdown text={event.text} handles={handles} />
+          </div>
+        </div>
+      )
+    case 'ai_user':
+      return (
+        <div style={{ alignSelf: 'flex-end', maxWidth: '78%', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <Meta
+            who={event.from_task ? `${userName(event.from_task.ai_user_id)} · task ${event.from_task.task_id}` : 'AI user'}
+            event={event}
+            now={now}
+            align="right"
+          />
+          <div
+            style={{
+              padding: '8px 12px',
+              borderRadius: '12px 12px 4px 12px',
+              background: dark.replyBubble,
+              border: `1px solid ${event.queued ? dark.ask : dark.ok}`,
               color: dark.bright,
               opacity: event.queued ? 0.8 : 1,
             }}

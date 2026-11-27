@@ -243,6 +243,18 @@ def create_app(config: Config | None = None, start: bool = True) -> FastAPI:
         session_task(request)
         return hub.tickets.search(q)
 
+    @app.post("/internal/tasks")
+    def internal_task_create(request: Request, body: dict = Body(...)):
+        parent = session_task(request)
+        child, created = hub.children.create(parent, str(body.get("to") or ""), str(body.get("message") or ""))
+        return {"task_id": child["id"], "created": created, "ai_user": hub.db.user(child["ai_user_id"])["name"],
+                "ticket_key": child["ticket_key"]}
+
+    @app.post("/internal/tasks/{task_id}/messages")
+    def internal_task_message(task_id: int, request: Request, body: dict = Body(...)):
+        child = hub.children.send(session_task(request), task_id, str(body.get("message") or ""))
+        return {"task_id": child["id"], "status": child["status"]}
+
     @app.post("/internal/harness/start")
     def internal_harness_start(request: Request, body: dict = Body(...)):
         task = session_task(request)
