@@ -2,7 +2,7 @@ import sqlite3
 
 import pytest
 
-from agenthub.db import ROLES, Database, now_iso
+from agenthub.db import ROLES, VERSION, Database, now_iso
 
 
 def test_fresh_database_has_the_four_users_and_nothing_else(tmp_path):
@@ -55,3 +55,29 @@ def test_one_open_task_per_ai_user_and_ticket(tmp_path):
     _insert_task(db, None, token="e")
     _insert_task(db, None, token="f")  # tasks without a ticket are not covered
     assert db.value("SELECT COUNT(*) FROM tasks") == 5
+
+
+def test_a_database_from_before_project_chosen_counts_every_ticket_as_chosen(tmp_path):
+    path = tmp_path / "a.db"
+    db = Database(path)
+    now = now_iso()
+    for title, project in (("free", None), ("on demo", "demo")):
+        db.run(
+            "INSERT INTO tickets (title, stage, position, assignee_id, model, project, created_at, updated_at)"
+            " VALUES (?, 'backlog', 1, 'pablo', 'opus', ?, ?, ?)", (title, project, now, now),
+        )
+    # put the file back to version 1: the tickets table as it was before the column
+    db.conn().execute("ALTER TABLE tickets DROP COLUMN project_chosen")
+    db.conn().execute("PRAGMA user_version = 1")
+    db.conn().close()
+
+    def tickets(d: Database) -> list[tuple]:
+        return [(r["title"], r["project"], r["project_chosen"]) for r in d.all("SELECT * FROM tickets ORDER BY id")]
+
+    migrated = Database(path)
+    assert migrated.value("PRAGMA user_version") == VERSION == 2
+    assert tickets(migrated) == [("free", None, 1), ("on demo", "demo", 1)]
+    migrated.conn().close()
+    again = Database(path)
+    assert again.value("PRAGMA user_version") == 2
+    assert tickets(again) == [("free", None, 1), ("on demo", "demo", 1)]

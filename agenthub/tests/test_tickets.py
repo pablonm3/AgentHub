@@ -373,6 +373,88 @@ def test_a_mention_inside_an_ai_comment_starts_nothing(app):
     assert _tasks_of(app, t["id"]) == []
 
 
+# ---------------------------------------------------------------- a ticket whose project is not chosen yet
+def _not_chosen(app, title, assignee="pablo"):
+    return app.ticket(title, "body", assignee=assignee, project_chosen=False)
+
+
+def test_a_card_added_without_a_choice_is_not_chosen_and_starts_no_task(app):
+    t = _not_chosen(app, "Nothing picked", assignee="engineer")
+    assert (t["project"], t["project_chosen"], t["tasks"]) == (None, False, [])
+    assert app.get("/api/tasks")["tasks"] == []
+    assert [(x["id"], x["project_chosen"]) for x in app.get("/api/tickets")["tickets"]] == [(t["id"], False)]
+    free = app.ticket("Picked No project", assignee="engineer")
+    assert (free["project"], free["project_chosen"], len(free["tasks"])) == (None, True, 1)
+    assert app.ticket("Picked demo", project="demo")["project_chosen"] is True
+    assert app.ticket("Picked a new project", new_project={"name": "fresh"})["project_chosen"] is True
+    body = {"title": "x", "description": "", "stage": "backlog", "assignee_id": "pablo", "model": "opus"}
+    assert "exactly one" in app.post("/api/tickets", {**body, "project": None, "project_chosen": False}, status=422)["message"]
+    app.wait_task(free["tasks"][0]["id"])
+
+
+def test_reassigning_a_not_chosen_ticket_to_an_ai_user_starts_nothing(app):
+    t = _not_chosen(app, "Reassigned")
+    after = app.patch(f"/api/tickets/{t['id']}", {"assignee_id": "engineer"})
+    assert (after["assignee_id"], after["project_chosen"], after["tasks"]) == ("engineer", False, [])
+    assert app.get("/api/tasks")["tasks"] == []
+
+
+def test_setting_the_project_starts_the_ai_assignees_task_and_fixes_the_project(app):
+    t = _not_chosen(app, "Pick later", assignee="engineer")
+    app.comment(t["id"], "a note written while nothing was picked")
+    after = app.patch(f"/api/tickets/{t['id']}", {"project": "demo"})
+    assert (after["project"], after["project_chosen"]) == ("demo", True)
+    assert [x["origin"] for x in after["tasks"]] == ["assignment"]
+    first = app.wait_task(after["tasks"][0]["id"])["events"][0]["text"]
+    assert "project is demo" in first and "a note written while nothing was picked" in first
+    app.patch(f"/api/tickets/{t['id']}", {"project": None}, status=422)
+    assert app.get(f"/api/tickets/{t['id']}")["project"] == "demo"
+
+
+def test_setting_no_project_makes_an_ordinary_ticket(app):
+    t = _not_chosen(app, "No project on purpose")
+    after = app.patch(f"/api/tickets/{t['id']}", {"project": None})
+    assert (after["project"], after["project_chosen"], after["tasks"]) == (None, True, [])
+    _mention_task(app, t["id"], "Engineer")
+
+
+def test_a_refused_pick_leaves_the_ticket_not_chosen(app, env):
+    t = _not_chosen(app, "Refused picks")
+    assert "no project named" in app.patch(f"/api/tickets/{t['id']}", {"project": "nope"}, status=422)["message"]
+    assert "Add a card" in app.patch(f"/api/tickets/{t['id']}", {"new_project": {"name": "fresh"}}, status=422)["message"]
+    assert app.get(f"/api/tickets/{t['id']}")["project_chosen"] is False
+    assert "fresh" not in [p["name"] for p in app.get("/api/bootstrap")["projects"]]
+    assert not [c for c in env.gh_log() if c["argv"][:2] == ["repo", "create"]]
+
+
+def test_a_comment_that_would_reach_an_ai_user_is_refused_until_a_project_is_chosen(app):
+    t = _not_chosen(app, "Mention too early", assignee="engineer")
+    refused = app.post(f"/api/tickets/{t['id']}/comments", {"body": "@DevOps look"}, status=409)
+    assert "Pick a project" in refused["message"]
+    detail = app.get(f"/api/tickets/{t['id']}")
+    assert (detail["comments"], detail["tasks"]) == ([], [])
+    note = app.comment(t["id"], "a plain note")
+    assert (note["delivered_to"], note["started"]) == ([], [])
+    assert [c["body"] for c in app.get(f"/api/tickets/{t['id']}")["comments"]] == ["a plain note"]
+    app.patch(f"/api/tickets/{t['id']}", {"project": None})
+    _mention_task(app, t["id"], "DevOps", "look")
+    app.wait_idle()
+
+
+def test_the_refusal_covers_an_activity_reply_and_the_assignees_open_task(app):
+    t = app.ticket("Task before the flag", "body", assignee="engineer")
+    engineer = app.wait_task(t["tasks"][0]["id"])
+    entry = [i for i in app.get("/api/activity")["items"] if i["task_id"] == engineer["id"]][0]
+    # no task can start on a not-chosen ticket through the app, so the flag is set on the row
+    app.hub.db.run("UPDATE tickets SET project_chosen = 0 WHERE id = ?", (t["id"],))
+    comments_before = app.get(f"/api/tickets/{t['id']}")["comment_count"]
+    events_before = len(app.task(engineer["id"])["events"])
+    for payload in ({"body": "plain words for the assignee"}, {"body": "thanks, go on", "reply_to": entry["comment"]["id"]}):
+        assert "Pick a project" in app.post(f"/api/tickets/{t['id']}/comments", payload, status=409)["message"]
+    assert app.get(f"/api/tickets/{t['id']}")["comment_count"] == comments_before
+    assert len(app.task(engineer["id"])["events"]) == events_before
+
+
 # ---------------------------------------------------------------- a ticket's tasks and totals (AC46, AC47)
 def test_a_ticket_lists_its_tasks_and_sums_their_tokens(app, env):
     t = app.ticket("Totals", "body", assignee="engineer")

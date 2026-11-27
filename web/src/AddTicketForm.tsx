@@ -3,13 +3,11 @@ import { api, errorBody, errorMessage, type GithubStatus, type NewTicket } from 
 import DescriptionField from './DescriptionField'
 import { repoWebUrl } from './lib/format'
 import { canCreateRepo, newProjectInput } from './lib/newProject'
+import { NEW_PROJECT, NO_PROJECT, NOT_CHOSEN, newTicketProject } from './lib/projectChoice'
 import { applyTicketDetail, loadBoot, notify, refresh, useAppState } from './store'
 import { color, font, input } from './theme'
 import { Button, CloseButton, Dialog, ErrorText, FieldLabel, Select } from './ui'
 import { useDictation } from './voice'
-
-const NEW_PROJECT = '__new__'
-const NO_PROJECT = '__none__'
 
 export interface NewProjectError {
   message: string
@@ -26,7 +24,7 @@ export default function AddTicketForm({ stageId, onClose }: { stageId: string; o
   const [description, setDescription] = useState('')
   const [assignee, setAssignee] = useState(human?.id ?? users[0]?.id ?? '')
   const [model, setModel] = useState(boot?.default_model ?? boot?.models[0] ?? '')
-  const [project, setProject] = useState(NO_PROJECT)
+  const [project, setProject] = useState(NOT_CHOSEN)
   const [projectName, setProjectName] = useState('')
   const [repoUrl, setRepoUrl] = useState('')
   const [busy, setBusy] = useState(false)
@@ -61,7 +59,7 @@ export default function AddTicketForm({ stageId, onClose }: { stageId: string; o
       }
       body = { ...base, new_project: checked.new_project }
     } else {
-      body = { ...base, project: project === NO_PROJECT ? null : project }
+      body = { ...base, ...newTicketProject(project) }
     }
     voice.cancel()
     setBusy(true)
@@ -150,6 +148,7 @@ export default function AddTicketForm({ stageId, onClose }: { stageId: string; o
               setNewProjectError(null)
             }}
             disabled={busy}
+            placeholder="Choose a project"
             options={options}
           />
           {isNew && (

@@ -105,6 +105,7 @@ const ticket: Ticket = {
   assignee_id: 'engineer',
   model: 'opus',
   project: 'AgentHub',
+  project_chosen: true,
   labels: [],
   comment_count: 3,
   task_status: 'running',
@@ -375,6 +376,88 @@ describe('the New project block', () => {
     const html = render({ can_create: false, reason: 'not_installed' }, { message: 'Enter the repo URL: this machine cannot create a GitHub repository.', createdRepo: null })
     expect(html).toContain('role="alert"')
     expect(text(html)).toContain('Enter the repo URL: this machine cannot create a GitHub repository.')
+  })
+})
+
+describe('a ticket whose project is not chosen yet', () => {
+  const options = (select: string) => select.match(/<option[^>]*>[^<]*<\/option>/g) ?? []
+  const notChosen: Ticket = { ...ticket, id: 2, key: 'AH-2', title: 'Pick me a project', project: null, project_chosen: false, comment_count: 0, task_status: null }
+  const noProject: Ticket = { ...ticket, id: 3, key: 'AH-3', title: 'On purpose without one', project: null, project_chosen: true, comment_count: 0, task_status: null }
+  const detailOf = (t: Ticket): TicketDetail => ({ ...t, comments: [], tasks: [], session_tokens: 0, harness_tokens: 0, project_info: null })
+
+  /** Serve and load the fixture's ticket with the two above, run `check`, and put the store back as it was. */
+  async function withTickets(check: () => Promise<void> | void): Promise<void> {
+    answers['GET /api/tickets'] = { tickets: [ticket, notChosen, noProject] }
+    answers['GET /api/tickets/2'] = detailOf(notChosen)
+    answers['GET /api/tickets/3'] = detailOf(noProject)
+    try {
+      await loadTickets()
+      await check()
+    } finally {
+      answers['GET /api/tickets'] = { tickets: [ticket] }
+      delete answers['GET /api/tickets/2']
+      delete answers['GET /api/tickets/3']
+      await loadTickets()
+      openTicket(1)
+      await loadTicketDetail()
+    }
+  }
+
+  async function dialogOf(id: number): Promise<string> {
+    openTicket(id)
+    await loadTicketDetail()
+    return renderToStaticMarkup(<TicketDialog />)
+  }
+
+  it('opens "Add a card" with nothing picked in Project, the placeholder first and not selectable', () => {
+    const html = renderToStaticMarkup(<AddTicketForm stageId="backlog" onClose={() => {}} />)
+    const select = /<select id="[^"]*-project"[^>]*>[\s\S]*?<\/select>/.exec(html)?.[0] ?? ''
+    expect(options(select)).toEqual([
+      '<option value="" disabled="" selected="">Choose a project</option>',
+      '<option value="AgentHub">AgentHub</option>',
+      '<option value="__new__">New project</option>',
+      '<option value="__none__">No project</option>',
+    ])
+  })
+
+  it('marks the card of a not-chosen ticket only', async () => {
+    await withTickets(() => {
+      const cards = renderToStaticMarkup(<Board />).split('class="wb-card"').slice(1)
+      const card = (key: string) => {
+        const found = cards.find((c) => c.includes(`>${key}<`))
+        expect(found, key).toBeDefined()
+        return found ?? ''
+      }
+      expect(text(card('AH-2'))).toContain('Pick a project: no AI work yet')
+      expect(text(card('AH-1'))).not.toContain('Pick a project')
+      expect(text(card('AH-3'))).not.toContain('Pick a project')
+    })
+  })
+
+  it('shows the note and the picker in the dialog of a not-chosen ticket', async () => {
+    await withTickets(async () => {
+      const html = await dialogOf(2)
+      const page = text(html)
+      expect(page).toContain('Project not chosen yet')
+      expect(page).toContain('Once set, the project cannot be changed.')
+      expect(page).not.toContain('Its tasks cannot start a harness run')
+      const select = /<select[^>]*aria-label="Project"[^>]*>[\s\S]*?<\/select>/.exec(html)?.[0] ?? ''
+      expect(options(select)).toEqual([
+        '<option value="" disabled="" selected="">Choose a project</option>',
+        '<option value="AgentHub">AgentHub</option>',
+        '<option value="__none__">No project</option>',
+      ])
+      expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Set project<\/button>/)
+    })
+  })
+
+  it('shows a "No project" ticket as before', async () => {
+    await withTickets(async () => {
+      const html = await dialogOf(3)
+      expect(text(html)).toContain('No project. Its tasks cannot start a harness run.')
+      expect(html).not.toContain('aria-label="Project"')
+      expect(html).not.toContain('Set project')
+    })
   })
 })
 

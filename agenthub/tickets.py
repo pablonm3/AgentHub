@@ -31,6 +31,8 @@ STAGES = [
 ]
 STAGE_IDS = [s["id"] for s in STAGES]
 MENTION_RE = re.compile(r"@([A-Za-z][A-Za-z0-9_]*)")
+NEEDS_PROJECT = ('Pick a project for this ticket first (a registered project or "No project"): '
+                 "until then no comment can go to an AI user.")
 
 
 def render(name: str, **values: str) -> str:
@@ -62,6 +64,7 @@ class Tickets:
             "assignee_id": row["assignee_id"],
             "model": row["model"],
             "project": row["project"],
+            "project_chosen": bool(row["project_chosen"]),
             "labels": json.loads(row["labels"] or "[]"),
             "comment_count": self.db.value("SELECT COUNT(*) FROM comments WHERE ticket_id = ?", (row["id"],)),
             "task_status": self.db.value("SELECT status FROM tasks WHERE ticket_id = ? ORDER BY id DESC LIMIT 1", (row["id"],)),
@@ -109,40 +112,54 @@ class Tickets:
             raise HubError("unknown assignee", 422)
         model = data.get("model") or self.db.setting("default_model")
         check_model(self.hub.config, model)
-        project_name, warning = self._resolve_project(data)
+        project_name, chosen, warning = self._resolve_project(data)
         now = now_iso()
         position = (self.db.value("SELECT MAX(position) FROM tickets WHERE stage = ?", (stage,)) or 0) + 1
         ticket_id = self.db.run(
-            "INSERT INTO tickets (title, description, stage, position, assignee_id, model, project, labels, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (title, str(data.get("description") or ""), stage, position, assignee["id"], model, project_name,
+            "INSERT INTO tickets (title, description, stage, position, assignee_id, model, project, project_chosen, labels,"
+            " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (title, str(data.get("description") or ""), stage, position, assignee["id"], model, project_name, int(chosen),
              json.dumps(data.get("labels") or []), now, now),
         )
         self.hub.events.publish("tickets", ticket_id)
-        if assignee["kind"] == "ai":
+        if assignee["kind"] == "ai" and chosen:  # no AI work before a project is chosen
             self.hand_over(self.get(ticket_id), assignee)
         return self.detail(ticket_id), warning
 
-    def _resolve_project(self, data: dict) -> tuple[str | None, str | None]:
-        """The ticket's project name and a registration warning; registers a new project first."""
-        # exactly one of: "project" (a registered name, or null for "No project") or "new_project"
+    def _resolve_project(self, data: dict) -> tuple[str | None, bool, str | None]:
+        """The ticket's project name, whether a project was chosen, and a registration warning; registers a new project first."""
+        # exactly one of: "project" (a registered name, or null for "No project"), "new_project",
+        # or "project_chosen": false (nothing picked yet)
         has_project, has_new = "project" in data, data.get("new_project") is not None
-        if has_project == has_new:
-            raise HubError("choose exactly one of a registered project, \"No project\" (project: null) or a new project", 422)
+        not_chosen = data.get("project_chosen") is False
+        if has_project + has_new + not_chosen != 1:
+            raise HubError('choose exactly one of a registered project, "No project" (project: null), a new project '
+                           'or no choice yet (project_chosen: false)', 422)
+        if not_chosen:
+            return None, False, None
         if has_new:
             new = data["new_project"] or {}
             project, warning = self.hub.projects.register(str(new.get("name") or ""), new.get("repo_url"))
-            return project["name"], warning
-        project_name = data["project"]
-        if project_name is not None and self.hub.projects.get(project_name) is None:
-            raise HubError(f"no project named {project_name!r} is registered", 422)
-        return project_name, None
+            return project["name"], True, warning
+        return self._registered_project(data["project"]), True, None
+
+    def _registered_project(self, name: str | None) -> str | None:
+        """The name when it is registered, None for "No project"; any other name is refused."""
+        if name is not None and self.hub.projects.get(name) is None:
+            raise HubError(f"no project named {name!r} is registered", 422)
+        return name
 
     def update(self, ticket_id: int, data: dict) -> dict:
         ticket = self.get(ticket_id)
-        if "project" in data or "new_project" in data:
-            raise HubError("a ticket's project is fixed once the ticket exists", 422)
+        if "new_project" in data:
+            raise HubError('a new project is registered from "Add a card", not on an existing ticket', 422)
         fields: dict = {}
+        if "project" in data:
+            if ticket["project_chosen"]:
+                raise HubError("a ticket's project is fixed once it is chosen", 422)
+            fields["project"] = self._registered_project(data["project"])
+            fields["project_chosen"] = 1
+        picked = "project" in fields
         if "title" in data:
             if not str(data["title"] or "").strip():
                 raise HubError("a ticket needs a title", 422)
@@ -171,8 +188,11 @@ class Tickets:
                 (*fields.values(), ticket_id),
             )
             self.hub.events.publish("tickets", ticket_id)
-        if new_assignee is not None and new_assignee["kind"] == "ai":
-            self.hand_over(self.get(ticket_id), new_assignee)
+        assignee = new_assignee or self.db.user(ticket["assignee_id"])
+        # an AI assignee is handed the ticket when it becomes the assignee or when the project is set,
+        # and never before a project is chosen
+        if (ticket["project_chosen"] or picked) and (new_assignee is not None or picked) and assignee["kind"] == "ai":
+            self.hand_over(self.get(ticket_id), assignee)
         return self.detail(ticket_id)
 
     def hand_over(self, ticket: dict, ai: dict) -> tuple[dict, bool]:
@@ -209,6 +229,8 @@ class Tickets:
             reply_row = self.db.one("SELECT * FROM comments WHERE id = ? AND ticket_id = ?", (reply_to, ticket_id))
             if reply_row is None:
                 raise HubError(f"comment {reply_to} is not on ticket {ticket_key(ticket_id)}", 422)
+        if author["kind"] == "human" and not ticket["project_chosen"] and self._comment_targets(ticket, body, reply_row):
+            raise HubError(NEEDS_PROJECT, 409)
         comment_id = self.db.run(
             "INSERT INTO comments (ticket_id, author_id, body, reply_to_id, created_at) VALUES (?, ?, ?, ?, ?)",
             (ticket_id, author["id"], body, reply_to, now_iso()),
@@ -220,37 +242,36 @@ class Tickets:
         self.hub.events.publish("tickets", ticket_id)
         return self.comment_view(comment), delivered, started
 
+    def _comment_targets(self, ticket: dict, body: str, reply_to: dict | None) -> list[tuple[dict, dict | None]]:
+        """The AI users a human comment reaches, each with its open task on the ticket (None: a task is started for it).
+        Three exclusive cases: mentioned AI users only; the entry's task for an Activity reply; the assignee's open task."""
+        mentioned = self.ai_users_mentioned(body)
+        if mentioned:  # AC8, AC38, AC44: the mentioned AI users and nobody else
+            return [(ai, self.hub.tasks.open_task(ticket["id"], ai["id"])) for ai in mentioned]
+        if reply_to is not None:  # AC25: an Activity reply without a mention goes to the task that posted the entry
+            posting = self.hub.tasks.get(reply_to["task_id"]) if reply_to["task_id"] else None
+            if posting and posting["status"] != "archived":
+                return [(self.db.user(posting["ai_user_id"]), posting)]
+            return []
+        assignee = self.db.user(ticket["assignee_id"])  # AC7, AC42: the assignee's open task, or no task
+        task = self.hub.tasks.open_task(ticket["id"], assignee["id"]) if assignee["kind"] == "ai" else None
+        return [(assignee, task)] if task else []
+
     def route_comment(self, ticket: dict, comment: dict, reply_to: dict | None = None) -> tuple[list[int], list[int]]:
-        """Three exclusive cases: mentioned AI users only; the entry's task for an Activity reply; the assignee's open task."""
+        """Deliver a human comment to the tasks it reaches and start the tasks its mentions ask for."""
         delivered: list[int] = []
         started: list[int] = []
-
-        def deliver(task: dict) -> None:
-            self.hub.tasks.send(task["id"], comment["body"], comment_id=comment["id"])
-            delivered.append(task["id"])
-
-        mentioned = self.ai_users_mentioned(comment["body"])
         with self._handing:
-            if mentioned:  # AC8, AC38, AC44: the mentioned AI users and nobody else
-                for ai in mentioned:
-                    task = self.hub.tasks.open_task(ticket["id"], ai["id"])
-                    if task:
-                        deliver(task)
-                    else:
-                        new = self.hub.tasks.create(
-                            ai["id"], ticket["model"], self._mention_input(ticket, comment),
-                            ticket_id=ticket["id"], origin="mention", origin_comment_id=comment["id"], first_kind="notice",
-                        )
-                        started.append(new["id"])
-            elif reply_to is not None:  # AC25: an Activity reply without a mention goes to the task that posted the entry
-                posting = self.hub.tasks.get(reply_to["task_id"]) if reply_to["task_id"] else None
-                if posting and posting["status"] != "archived":
-                    deliver(posting)
-            else:  # AC7, AC42: the assignee's open task, or no task
-                assignee = self.db.user(ticket["assignee_id"])
-                task = self.hub.tasks.open_task(ticket["id"], assignee["id"]) if assignee["kind"] == "ai" else None
+            for ai, task in self._comment_targets(ticket, comment["body"], reply_to):
                 if task:
-                    deliver(task)
+                    self.hub.tasks.send(task["id"], comment["body"], comment_id=comment["id"])
+                    delivered.append(task["id"])
+                else:
+                    new = self.hub.tasks.create(
+                        ai["id"], ticket["model"], self._mention_input(ticket, comment),
+                        ticket_id=ticket["id"], origin="mention", origin_comment_id=comment["id"], first_kind="notice",
+                    )
+                    started.append(new["id"])
         return delivered, started
 
     def post_ai_comment(self, ticket_id: int, ai_user_id: str, body: str, task_id: int) -> int:

@@ -13,6 +13,10 @@ from .config import DEFAULT_MODEL
 
 SCHEMA = Path(__file__).with_name("schema.sql")
 ROLES = Path(__file__).parent / "prompts" / "roles"
+VERSION = 2  # the version schema.sql creates
+ADD_PROJECT_CHOSEN = (
+    "ALTER TABLE tickets ADD COLUMN project_chosen INTEGER NOT NULL DEFAULT 1 CHECK (project_chosen IN (0, 1))"
+)
 
 SEED_USERS = [
     # id, name, kind, handle, initials, color, role prompt file
@@ -37,10 +41,16 @@ class Database:
         path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
         conn = self.conn()
-        if conn.execute("PRAGMA user_version").fetchone()[0] == 0:
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version == 0:
             conn.executescript(SCHEMA.read_text())
             self._seed(conn)
-            conn.execute("PRAGMA user_version = 1")
+            conn.execute(f"PRAGMA user_version = {VERSION}")
+        elif version == 1:
+            # tickets from before the column all count as chosen: the default gives them 1
+            with self.transaction():
+                conn.execute(ADD_PROJECT_CHOSEN)
+                conn.execute(f"PRAGMA user_version = {VERSION}")
 
     def conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)

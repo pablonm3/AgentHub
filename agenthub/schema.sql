@@ -16,18 +16,20 @@ CREATE TABLE settings (
 );
 
 -- project: a name registered in private/harness.yaml; NULL is "No project". Shown as AH-<id>.
+-- project_chosen: 0 while nobody picked a project or "No project"; project is then NULL and no AI work starts for the ticket.
 CREATE TABLE tickets (
-    id          INTEGER PRIMARY KEY,
-    title       TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    stage       TEXT NOT NULL,
-    position    REAL NOT NULL,
-    assignee_id TEXT NOT NULL REFERENCES users(id),
-    model       TEXT NOT NULL,
-    project     TEXT,
-    labels      TEXT NOT NULL DEFAULT '[]',
-    created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
+    id             INTEGER PRIMARY KEY,
+    title          TEXT NOT NULL,
+    description    TEXT NOT NULL DEFAULT '',
+    stage          TEXT NOT NULL,
+    position       REAL NOT NULL,
+    assignee_id    TEXT NOT NULL REFERENCES users(id),
+    model          TEXT NOT NULL,
+    project        TEXT,
+    labels         TEXT NOT NULL DEFAULT '[]',
+    created_at     TEXT NOT NULL,
+    updated_at     TEXT NOT NULL,
+    project_chosen INTEGER NOT NULL DEFAULT 1 CHECK (project_chosen IN (0, 1))
 );
 
 -- task_id: the task that posted the comment (AI comments only).

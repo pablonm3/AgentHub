@@ -117,6 +117,8 @@ export interface Ticket {
   assignee_id: string
   model: string
   project: string | null
+  /** False while nobody picked a project or "No project": no AI work starts for the ticket. */
+  project_chosen: boolean
   labels: string[]
   comment_count: number
   task_status: TaskStatus | null
@@ -176,8 +178,9 @@ export interface CommentResult {
   started: number[]
 }
 
+// `project` is accepted only for a ticket whose project is not chosen yet.
 export type TicketPatch = Partial<
-  Pick<Ticket, 'title' | 'description' | 'stage' | 'position' | 'assignee_id' | 'model'>
+  Pick<Ticket, 'title' | 'description' | 'stage' | 'position' | 'assignee_id' | 'model' | 'project'>
 >
 
 interface NewTicketBase {
@@ -188,10 +191,12 @@ interface NewTicketBase {
   model: string
 }
 
-// Exactly one of `project` (a registered name, or null for "No project") and `new_project`.
+// Exactly one of `project` (a registered name, or null for "No project"), `new_project`,
+// and `project_chosen: false` (nothing picked: the project is set later in the ticket dialog).
 export type NewTicket =
   | (NewTicketBase & { project: string | null })
   | (NewTicketBase & { new_project: { name: string; repo_url?: string } })
+  | (NewTicketBase & { project_chosen: false })
 
 export type TaskFilter = TaskStatus | 'all'
 

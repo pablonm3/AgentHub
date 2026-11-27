@@ -259,6 +259,22 @@ function Card({
         opacity: faded ? 0.4 : 1,
       }}
     >
+      {!ticket.project_chosen && (
+        <span
+          style={{
+            alignSelf: 'flex-start',
+            padding: '2px 8px',
+            borderRadius: 6,
+            background: color.warnSoft,
+            color: color.warnInk,
+            fontSize: 11,
+            lineHeight: '16px',
+            fontWeight: 600,
+          }}
+        >
+          Pick a project: no AI work yet
+        </span>
+      )}
       {chips.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
           {chips.map((text, i) => (

@@ -126,7 +126,7 @@ class App:
                project: str | None = None, **extra) -> dict:
         body = {"title": title, "description": description, "stage": "backlog", "assignee_id": assignee,
                 "model": extra.pop("model", "opus"), **extra}
-        if "new_project" not in body:
+        if "new_project" not in body and body.get("project_chosen") is not False:
             body["project"] = project
         return self.post("/api/tickets", body)
 

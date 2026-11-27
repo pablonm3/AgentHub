@@ -1,10 +1,11 @@
 import { useState, type ReactNode } from 'react'
-import { api, type Comment, type Task, type TicketDetail, type TicketPatch, type User } from './api'
+import { api, type Comment, type Project, type Task, type TicketDetail, type TicketPatch, type User } from './api'
 import CommentBox from './CommentBox'
 import DescriptionField from './DescriptionField'
 import { positionFor } from './lib/board'
 import { deliveryLine } from './lib/delivery'
 import { formatRelative, repoWebUrl } from './lib/format'
+import { NO_PROJECT, NOT_CHOSEN, pickedProject } from './lib/projectChoice'
 import {
   applyTicketDetail,
   closeTicket,
@@ -145,7 +146,11 @@ export default function TicketDialog() {
             />
           </Section>
           <Section title="Project">
-            <ProjectInfo detail={detail} project={ticket.project} />
+            {ticket.project_chosen ? (
+              <ProjectInfo detail={detail} project={ticket.project} />
+            ) : (
+              <ProjectPicker key={ticket.id} projects={boot.projects} onSet={(project) => save({ project })} />
+            )}
           </Section>
           {(ticket.labels ?? []).length > 0 && (
             <Section title="Labels">
@@ -359,6 +364,43 @@ function ProjectInfo({ detail, project }: { detail: TicketDetail | null; project
         <span style={{ color: color.warnInk, fontSize: 12 }}>Not ready for harness runs: its AGENTS.md is not filled in.</span>
       )}
       <span style={{ color: color.muted, fontSize: 12 }}>The project of a ticket cannot be changed.</span>
+    </div>
+  )
+}
+
+/** For a ticket whose project is not chosen yet: the note, the dropdown and "Set project". */
+function ProjectPicker({ projects, onSet }: { projects: Project[]; onSet: (project: string | null) => Promise<void> }) {
+  const [option, setOption] = useState(NOT_CHOSEN)
+  const [busy, setBusy] = useState(false)
+
+  const set = async () => {
+    setBusy(true)
+    try {
+      await onSet(pickedProject(option))
+    } catch {
+      // Reported by onSet; the choice stays in the dropdown.
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <p style={{ margin: 0, color: color.warnInk }}>
+        Project not chosen yet. No AI user works on this ticket until you set one.
+      </p>
+      <Select
+        ariaLabel="Project"
+        value={option}
+        onChange={setOption}
+        disabled={busy}
+        placeholder="Choose a project"
+        options={[...projects.map((p) => ({ value: p.name, label: p.name })), { value: NO_PROJECT, label: 'No project' }]}
+      />
+      <Button kind="primary" onClick={() => void set()} disabled={busy || option === NOT_CHOSEN}>
+        {busy ? 'Setting…' : 'Set project'}
+      </Button>
+      <span style={{ color: color.muted, fontSize: 12 }}>Once set, the project cannot be changed.</span>
     </div>
   )
 }
