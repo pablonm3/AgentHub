@@ -13,7 +13,7 @@ from .config import DEFAULT_MODEL
 
 SCHEMA = Path(__file__).with_name("schema.sql")
 ROLES = Path(__file__).parent / "prompts" / "roles"
-VERSION = 2  # the version schema.sql creates
+VERSION = 1  # the version schema.sql creates
 ADD_PROJECT_CHOSEN = (
     "ALTER TABLE tickets ADD COLUMN project_chosen INTEGER NOT NULL DEFAULT 1 CHECK (project_chosen IN (0, 1))"
 )
@@ -46,11 +46,18 @@ class Database:
             conn.executescript(SCHEMA.read_text())
             self._seed(conn)
             conn.execute(f"PRAGMA user_version = {VERSION}")
-        elif version == 1:
-            # tickets from before the column all count as chosen: the default gives them 1
-            with self.transaction():
+        else:
+            self._add_project_chosen()
+
+    def _add_project_chosen(self) -> None:
+        """Give a file from before tickets.project_chosen the column; its tickets all count as chosen (default 1).
+
+        Decided by the column, not by user_version: another branch numbers its own migrations, and a file it
+        moved to version 2 has no column.
+        """
+        with self.transaction() as conn:
+            if "project_chosen" not in {row["name"] for row in conn.execute("PRAGMA table_info(tickets)")}:
                 conn.execute(ADD_PROJECT_CHOSEN)
-                conn.execute(f"PRAGMA user_version = {VERSION}")
 
     def conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)

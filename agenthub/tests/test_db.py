@@ -57,8 +57,8 @@ def test_one_open_task_per_ai_user_and_ticket(tmp_path):
     assert db.value("SELECT COUNT(*) FROM tasks") == 5
 
 
-def test_a_database_from_before_project_chosen_counts_every_ticket_as_chosen(tmp_path):
-    path = tmp_path / "a.db"
+def _file_without_project_chosen(path, version: int) -> None:
+    """A file with two tickets whose tickets table is as it was before the column, at the given user_version."""
     db = Database(path)
     now = now_iso()
     for title, project in (("free", None), ("on demo", "demo")):
@@ -66,18 +66,38 @@ def test_a_database_from_before_project_chosen_counts_every_ticket_as_chosen(tmp
             "INSERT INTO tickets (title, stage, position, assignee_id, model, project, created_at, updated_at)"
             " VALUES (?, 'backlog', 1, 'pablo', 'opus', ?, ?, ?)", (title, project, now, now),
         )
-    # put the file back to version 1: the tickets table as it was before the column
     db.conn().execute("ALTER TABLE tickets DROP COLUMN project_chosen")
-    db.conn().execute("PRAGMA user_version = 1")
+    db.conn().execute(f"PRAGMA user_version = {version}")
     db.conn().close()
 
-    def tickets(d: Database) -> list[tuple]:
-        return [(r["title"], r["project"], r["project_chosen"]) for r in d.all("SELECT * FROM tickets ORDER BY id")]
+
+def _tickets(db: Database) -> list[tuple]:
+    return [(r["title"], r["project"], r["project_chosen"]) for r in db.all("SELECT * FROM tickets ORDER BY id")]
+
+
+def test_a_database_from_before_project_chosen_counts_every_ticket_as_chosen(tmp_path):
+    path = tmp_path / "a.db"
+    _file_without_project_chosen(path, version=1)
 
     migrated = Database(path)
-    assert migrated.value("PRAGMA user_version") == VERSION == 2
-    assert tickets(migrated) == [("free", None, 1), ("on demo", "demo", 1)]
+    assert migrated.value("PRAGMA user_version") == VERSION == 1
+    assert _tickets(migrated) == [("free", None, 1), ("on demo", "demo", 1)]
+    migrated.conn().close()
+    again = Database(path)
+    assert again.value("PRAGMA user_version") == 1
+    assert _tickets(again) == [("free", None, 1), ("on demo", "demo", 1)]
+
+
+def test_a_version_2_file_without_project_chosen_gets_the_column(tmp_path):
+    # the installed database's shape: another branch moved it past version 1 without adding the column
+    path = tmp_path / "a.db"
+    _file_without_project_chosen(path, version=2)
+
+    migrated = Database(path)
+    assert "project_chosen" in {r["name"] for r in migrated.all("PRAGMA table_info(tickets)")}
+    assert migrated.value("PRAGMA user_version") == 2
+    assert _tickets(migrated) == [("free", None, 1), ("on demo", "demo", 1)]
     migrated.conn().close()
     again = Database(path)
     assert again.value("PRAGMA user_version") == 2
-    assert tickets(again) == [("free", None, 1), ("on demo", "demo", 1)]
+    assert _tickets(again) == [("free", None, 1), ("on demo", "demo", 1)]
