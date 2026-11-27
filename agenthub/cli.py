@@ -1,7 +1,9 @@
 """`agenthub serve`, and the commands an AI user's session runs to reach the server.
 
 Inside a session, `AGENTHUB_URL` and `AGENTHUB_TASK_TOKEN` say which server and which task:
-`agenthub title "<text>"`, `agenthub search "<phrase>"`, `agenthub harness start|status|resume`.
+`agenthub title "<text>"`, `agenthub search "<phrase>"`, `agenthub harness start|status|resume`, and
+`agenthub task create --to <AI user> "<request>"` / `agenthub task send <task id> "<text>"` to give work
+to another AI user as a child task of this one and to write to that child task.
 """
 
 from __future__ import annotations
@@ -104,6 +106,32 @@ def cmd_harness(args: argparse.Namespace) -> int:
     return 0
 
 
+def _text(args: argparse.Namespace, what: str) -> str:
+    """The text of a `task` command: its words, or the file named by --file."""
+    if args.file and args.text:
+        raise SystemExit(f"agenthub task {args.action}: give the {what} as words or with --file, not both")
+    text = Path(args.file).read_text() if args.file else " ".join(args.text)
+    if not text.strip():
+        raise SystemExit(f"agenthub task {args.action}: give the {what} as words or with --file <path>")
+    return text
+
+
+def cmd_task(args: argparse.Namespace) -> int:
+    if args.action == "create":
+        out = _call("POST", "/internal/tasks", {"to": args.to, "message": _text(args, "request")})
+        where = f"on {out['ticket_key']}" if out["ticket_key"] else "with no ticket"
+        if out["created"]:
+            print(f"task {out['task_id']} created for {out['ai_user']} {where}. Its questions, its gates and its result "
+                  f"reach this task as messages. Write to it with: agenthub task send {out['task_id']} \"<text>\"")
+        else:
+            print(f"{out['ai_user']} already works {where} in task {out['task_id']}, a child task of this task: the request "
+                  "was sent to it there. Its answer reaches this task as a message.")
+    else:
+        out = _call("POST", f"/internal/tasks/{args.target}/messages", {"message": _text(args, "message")})
+        print(f"sent to task {out['task_id']}; it runs its next turn with it, and its answer reaches this task as a message.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="agenthub", description="AgentHub server and the commands of an AI user's session")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -125,6 +153,18 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--project", help="only for a task without a ticket; a ticket's task runs on the ticket's project")
     s.add_argument("--workflow", default="feature-v1")
     s.set_defaults(fn=cmd_harness)
+    s = sub.add_parser("task", help="give work to another AI user as a child task of this task, or write to a child task")
+    task_sub = s.add_subparsers(dest="action", required=True)
+    c = task_sub.add_parser("create", help="create a task for another AI user; its answers reach this task")
+    c.add_argument("--to", required=True, help="the AI user: handle, name or id, any case (DevOps, \"Data Scientist\")")
+    c.add_argument("--file", help="read the request from this file instead of the words")
+    c.add_argument("text", nargs="*", help="the request")
+    c.set_defaults(fn=cmd_task)
+    m = task_sub.add_parser("send", help="send a message to a child task of this task")
+    m.add_argument("target", type=int, metavar="task_id")
+    m.add_argument("--file", help="read the message from this file instead of the words")
+    m.add_argument("text", nargs="*", help="the message")
+    m.set_defaults(fn=cmd_task)
     return p
 
 

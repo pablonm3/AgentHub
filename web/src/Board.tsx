@@ -10,6 +10,7 @@ import {
   notifyError,
   openTicket,
   useAppState,
+  userName,
 } from './store'
 import { color, font, pageTitle } from './theme'
 import { Avatar, CommentIcon, EmptyState, PlusIcon, StatusPill } from './ui'
@@ -312,7 +313,9 @@ function Card({
             {ticket.comment_count}
           </span>
         )}
-        {ticket.task_status && <StatusPill status={ticket.task_status} small />}
+        {ticket.task_status && (
+          <StatusPill status={ticket.task_status} small waitingOn={ticket.task_waiting_on ? userName(ticket.task_waiting_on) : undefined} />
+        )}
         <div style={{ display: 'flex', marginLeft: 'auto', paddingLeft: 6 }}>
           <Avatar user={assignee} size={26} />
         </div>

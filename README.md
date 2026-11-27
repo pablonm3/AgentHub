@@ -4,8 +4,11 @@ A board where one human user, Pablo, works with three AI users — Data Scientis
 DevOps — through tickets and tasks instead of a terminal. Assigning a ticket to an AI user,
 @mentioning one in a comment, or starting a task from the Tasks page starts a Claude session with
 that AI user's role prompt. What the AI user needs from Pablo comes back as a ticket comment, listed
-in the Activity tab. Tasks are saved in a database, so they stop and continue later; the Tasks page
-shows each task's status, title, model, working time and token use.
+in the Activity tab. An AI user can also give a piece of work to another AI user as a child task
+(`agenthub task create`); the child's questions, gates and result go back to the task that asked,
+which answers them itself or asks Pablo. Tasks are saved in a database, so they stop and continue
+later; the Tasks page shows each task's status, title, model, working time, token use, parent and
+child tasks.
 
 At its core AgentHub has its own copy of a coding harness (`agenthub-harness`): an AI user starts a
 harness run (context, spec, plan, build, tests, reviews, report) when a ticket's work needs it, and
@@ -20,7 +23,7 @@ the run's gates reach Pablo as comments.
 | `agenthub/tests/` | pytest suite with a fake `claude` and a fake `gh`; `serve_fake.py` starts the app in fake mode |
 | `web/` | the UI (React, Vite, TypeScript), built to `web/dist` and served by the server |
 | `harness/`, `workflows/`, `skills/general/`, `agentmds/GENERAL.md`, `docs/WORKFLOW_SPEC.md`, `observability/otel.env` | the harness copy: orchestrator, workflows `feature-v1`, `regression-v1` and `research-v1`, the harness skills and rules |
-| `skills/agents/` | the AI users' shared skills: `search-history` (search tickets, comments and task chats, archived ones included) and `coding-harness` |
+| `skills/agents/` | the AI users' shared skills: `search-history` (search tickets, comments and task chats, archived ones included), `coding-harness` and `ask-ai-user` (give work to another AI user as a child task) |
 | `scripts/check_public_tree.py` | fails when a tracked file holds private content; run it before every commit |
 | `deploy/`, `.github/workflows/deploy.yml` | tests on every push, and the deploy of a copy installed on a server on every push to `main` (see Deployment) |
 | `private/` | git submodule `AgentHub-private` (private): `agents.md`, `.env`, the harness manifest `harness.yaml`, every project's `AGENTS.md` and skills. Its `README.md` describes it. Nothing of it is tracked here |

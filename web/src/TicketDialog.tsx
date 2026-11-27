@@ -19,7 +19,7 @@ import {
   userName,
 } from './store'
 import { color, font, sectionHeading } from './theme'
-import { Avatar, Button, CloseButton, Dialog, EditableTitle, ErrorText, Markdown, Select, StatusPill, Timer, TokenCounts } from './ui'
+import { Avatar, Button, CloseButton, Dialog, EditableTitle, ErrorText, Markdown, Select, TaskStatusPill, Timer, TokenCounts } from './ui'
 import { useDictation } from './voice'
 
 export default function TicketDialog() {
@@ -300,6 +300,7 @@ function CommentView({
 }) {
   const author = findUser(users, comment.author_id)
   const human = author ? author.kind === 'human' : comment.author_id === 'pablo'
+  const child = comment.child_task
   return (
     <div style={{ display: 'flex', gap: 10 }}>
       <Avatar user={author} size={30} ring="none" />
@@ -318,6 +319,18 @@ function CommentView({
         <Markdown text={comment.body} handles={handles} style={{ lineHeight: '22px' }} />
         {human && (
           <span style={{ color: color.muted, fontSize: 12, lineHeight: '16px' }}>{deliveryLine(comment, userName)}</span>
+        )}
+        {child && (
+          <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 8px', fontSize: 12 }}>
+            <TaskStatusPill task={child} small />
+            <button
+              type="button"
+              onClick={() => openTask(child.id)}
+              style={{ padding: 0, border: 0, background: 'transparent', color: color.accentInk, fontSize: 12, fontWeight: 600 }}
+            >
+              Open {userName(child.ai_user_id)}'s task
+            </button>
+          </span>
         )}
         {!human && comment.task_id !== null && (
           <span>
@@ -408,7 +421,7 @@ function TaskSummary({ task, user }: { task: Task; user: User | undefined }) {
       }}
     >
       <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-        <StatusPill status={task.status} small />
+        <TaskStatusPill task={task} small />
         <span
           style={{
             minWidth: 0,
@@ -429,6 +442,7 @@ function TaskSummary({ task, user }: { task: Task; user: User | undefined }) {
           <Avatar user={user} size={18} ring="none" />
           {user?.name ?? task.ai_user_id}
         </span>
+        {task.parent && <span>Child of {userName(task.parent.ai_user_id)}'s task</span>}
         <span style={{ fontFamily: font.mono }}>{task.model}</span>
         <Timer task={task} />
         <TokenCounts session={task.session_tokens} harness={task.harness_tokens} />

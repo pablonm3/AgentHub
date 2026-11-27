@@ -68,7 +68,8 @@ class Env:
 
     def scenario(self, **values) -> None:
         (self.fake_dir / "scenario.json").write_text(json.dumps(values))
-        (self.fake_dir / "scenario.counter").unlink(missing_ok=True)
+        for counter in self.fake_dir.glob("scenario.counter*"):
+            counter.unlink()
 
     def gh_scenario(self, **values) -> None:
         (self.gh_dir / "scenario.json").write_text(json.dumps(values))

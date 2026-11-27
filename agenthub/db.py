@@ -1,7 +1,8 @@
-"""SQLite connection, schema and seed. One connection per thread, WAL mode."""
+"""SQLite connection, schema, migrations and seed. One connection per thread, WAL mode."""
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -12,6 +13,8 @@ from typing import Any, Iterator
 from .config import DEFAULT_MODEL
 
 SCHEMA = Path(__file__).with_name("schema.sql")
+MIGRATIONS = Path(__file__).with_name("migrations")  # <version>_<name>.sql brings version - 1 to version
+VERSION = 2  # the version schema.sql creates
 ROLES = Path(__file__).parent / "prompts" / "roles"
 
 SEED_USERS = [
@@ -37,10 +40,42 @@ class Database:
         path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
         conn = self.conn()
-        if conn.execute("PRAGMA user_version").fetchone()[0] == 0:
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version == 0:
             conn.executescript(SCHEMA.read_text())
             self._seed(conn)
-            conn.execute("PRAGMA user_version = 1")
+            conn.execute(f"PRAGMA user_version = {VERSION}")
+        elif version < VERSION:
+            self._backup(version)
+            for target, script in _migrations(version):
+                self._migrate(conn, target, script)
+
+    def _backup(self, version: int) -> None:
+        """A copy of the file as it was, beside it, before the first migration touches it."""
+        target = sqlite3.connect(self.path.with_name(f"{self.path.name}.v{version}.bak"))
+        try:
+            self.conn().backup(target)
+        finally:
+            target.close()
+
+    @staticmethod
+    def _migrate(conn: sqlite3.Connection, target: int, script: Path) -> None:
+        """One migration, all or nothing; foreign keys are off while it rebuilds tables and checked before it commits."""
+        conn.execute("PRAGMA foreign_keys = OFF")  # a no-op inside a transaction, so set before BEGIN
+        try:
+            # BEGIN inside the script: Python 3.11's executescript commits an open transaction first
+            conn.executescript("BEGIN IMMEDIATE;\n" + script.read_text())
+            broken = conn.execute("PRAGMA foreign_key_check").fetchall()
+            if broken:
+                raise sqlite3.IntegrityError(f"{script.name} leaves {len(broken)} rows with a broken reference")
+            conn.execute(f"PRAGMA user_version = {target}")
+            conn.execute("COMMIT")
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.execute("PRAGMA foreign_keys = ON")
 
     def conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
@@ -101,3 +136,12 @@ class Database:
     def users(self) -> list[dict[str, Any]]:
         order = {u[0]: i for i, u in enumerate(SEED_USERS)}
         return sorted(self.all("SELECT * FROM users"), key=lambda u: order.get(u["id"], 99))
+
+
+def _migrations(version: int) -> list[tuple[int, Path]]:
+    """The migration scripts that bring a file at `version` to VERSION, in order; a missing step is an error."""
+    found = {int(m.group(1)): p for p in MIGRATIONS.glob("*.sql") if (m := re.match(r"(\d+)_", p.name))}
+    missing = [v for v in range(version + 1, VERSION + 1) if v not in found]
+    if missing:
+        raise RuntimeError(f"no migration to database version {missing[0]} in {MIGRATIONS}")
+    return [(v, found[v]) for v in range(version + 1, VERSION + 1)]

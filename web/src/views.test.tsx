@@ -13,7 +13,7 @@ import SettingsPage from './SettingsPage'
 import TaskDialog from './TaskDialog'
 import TasksPage from './TasksPage'
 import TicketDialog from './TicketDialog'
-import type { Bootstrap, Comment, GithubStatus, Task, TaskDetail, Ticket, TicketDetail } from './api'
+import type { Bootstrap, ChatEvent, Comment, GithubStatus, Task, TaskDetail, TaskLink, Ticket, TicketDetail } from './api'
 import {
   getState,
   loadActivity,
@@ -83,16 +83,45 @@ function task(over: Partial<Task>): Task {
     session_tokens: 12_345,
     harness_tokens: 3000,
     harness_runs: [{ run_id: 'retries_1', status: 'running', pending_kind: null, tokens: 3000 }],
+    parent: null,
+    children: [],
+    waiting_on: null,
     created_at: '2026-11-23T10:00:00Z',
     updated_at: '2026-11-23T10:05:00Z',
     ...over,
   }
 }
 
+const link = (t: Task): TaskLink => ({
+  id: t.id,
+  ai_user_id: t.ai_user_id,
+  title: t.title,
+  display_title: t.display_title,
+  status: t.status,
+  waiting_on: t.waiting_on,
+})
+
+// Task 6 is a child of task 3: DevOps works for the Engineer and waits on its answer.
+const parentTask = task({ id: 3 })
+const childTask = task({
+  id: 6,
+  ai_user_id: 'devops',
+  origin: 'ai_user',
+  title: 'Profile the retry queue',
+  display_title: 'Profile the retry queue',
+  status: 'waiting_on_user',
+  running_since: null,
+  harness_runs: [],
+  parent: link(parentTask),
+  waiting_on: { task_id: 3, ai_user_id: 'engineer' },
+})
+parentTask.children = [link(childTask)]
+
 const tasks: Task[] = [
-  task({ id: 3 }),
+  parentTask,
   task({ id: 4, ai_user_id: 'devops', status: 'archived', title: null, display_title: 'Check the deploy', running_since: null, session_tokens: 950, harness_tokens: 0, harness_runs: [] }),
   task({ id: 5, ticket_id: null, ticket_key: null, ticket_title: null, origin: 'manual', ai_user_id: 'data_scientist', status: 'waiting_on_user', running_since: null, status_reason: 'Not logged in' }),
+  childTask,
 ]
 
 const ticket: Ticket = {
@@ -108,35 +137,58 @@ const ticket: Ticket = {
   labels: [],
   comment_count: 3,
   task_status: 'running',
+  task_waiting_on: null,
   created_at: '2026-11-23T10:00:00Z',
   updated_at: '2026-11-23T10:05:00Z',
 }
 
+const plain = { child_task: null, in_activity: 1 }
 const comments: Comment[] = [
-  { id: 10, ticket_id: 1, author_id: 'pablo', body: 'Please look, @Engineer and @DevOps', task_id: null, reply_to_id: null, created_at: '2026-11-23T10:01:00Z', delivered_to: [{ task_id: 3, ai_user_id: 'engineer' }], started: [{ task_id: 4, ai_user_id: 'devops' }] },
-  { id: 11, ticket_id: 1, author_id: 'engineer', body: 'Done, see [the report](/reports/3/report.html)', task_id: 3, reply_to_id: null, created_at: '2026-11-23T10:02:00Z', delivered_to: [], started: [] },
-  { id: 12, ticket_id: 1, author_id: 'pablo', body: 'Thanks', task_id: null, reply_to_id: 11, created_at: '2026-11-23T10:03:00Z', delivered_to: [], started: [] },
+  { id: 10, ticket_id: 1, author_id: 'pablo', body: 'Please look, @Engineer and @DevOps', task_id: null, reply_to_id: null, created_at: '2026-11-23T10:01:00Z', delivered_to: [{ task_id: 3, ai_user_id: 'engineer' }], started: [{ task_id: 4, ai_user_id: 'devops' }], ...plain },
+  { id: 11, ticket_id: 1, author_id: 'engineer', body: 'Done, see [the report](/reports/3/report.html)', task_id: 3, reply_to_id: null, created_at: '2026-11-23T10:02:00Z', delivered_to: [], started: [], ...plain },
+  { id: 12, ticket_id: 1, author_id: 'pablo', body: 'Thanks', task_id: null, reply_to_id: 11, created_at: '2026-11-23T10:03:00Z', delivered_to: [], started: [], ...plain },
+  { id: 13, ticket_id: 1, author_id: 'engineer', body: 'Created a task for DevOps:\n\n> Profile the retry queue', task_id: 3, reply_to_id: null, created_at: '2026-11-23T10:04:00Z', delivered_to: [], started: [], child_task: link(childTask), in_activity: 1 },
 ]
 
 const ticketDetail: TicketDetail = {
   ...ticket,
   comments,
-  tasks: [tasks[0], tasks[1]],
+  tasks: [tasks[0], tasks[1], childTask],
   session_tokens: 13_295,
   harness_tokens: 3000,
   project_info: boot.projects[0],
 }
 
+const line = (id: number, kind: ChatEvent['kind'], text: string, over: Partial<ChatEvent> = {}): ChatEvent => ({
+  id,
+  kind,
+  text,
+  created_at: `2026-11-23T10:00:0${id}Z`,
+  comment_id: null,
+  queued: false,
+  from_task: null,
+  ...over,
+})
+
 const taskDetail: TaskDetail = {
   ...tasks[0],
   events: [
-    { id: 1, kind: 'notice', text: 'Ticket AH-1: Add retries', created_at: '2026-11-23T10:00:00Z', comment_id: null, queued: false },
-    { id: 2, kind: 'tool', text: 'Read src/sender.py', created_at: '2026-11-23T10:00:01Z', comment_id: null, queued: false },
-    { id: 3, kind: 'assistant', text: 'Looking at the sender.', created_at: '2026-11-23T10:00:02Z', comment_id: null, queued: false },
-    { id: 4, kind: 'reply', text: 'Done: **retries** added.', created_at: '2026-11-23T10:00:03Z', comment_id: null, queued: false },
-    { id: 5, kind: 'user', text: 'Also cap the delay', created_at: '2026-11-23T10:00:04Z', comment_id: null, queued: true },
-    { id: 6, kind: 'system', text: 'Stopped by Pablo', created_at: '2026-11-23T10:00:05Z', comment_id: null, queued: false },
-    { id: 7, kind: 'error', text: 'usage limit', created_at: '2026-11-23T10:00:06Z', comment_id: null, queued: false },
+    line(1, 'notice', 'Ticket AH-1: Add retries'),
+    line(2, 'tool', 'Read src/sender.py'),
+    line(3, 'assistant', 'Looking at the sender.'),
+    line(4, 'reply', 'Done: **retries** added.'),
+    line(5, 'user', 'Also cap the delay', { queued: true }),
+    line(6, 'system', 'Stopped by Pablo'),
+    line(7, 'error', 'usage limit'),
+    line(8, 'ai_user', 'Which queue do you mean?', { from_task: { task_id: 6, ai_user_id: 'devops' } }),
+  ],
+}
+
+const childDetail: TaskDetail = {
+  ...childTask,
+  events: [
+    line(1, 'ai_user', 'Profile the retry queue', { from_task: { task_id: 3, ai_user_id: 'engineer' } }),
+    line(2, 'reply', 'Which queue do you mean?'),
   ],
 }
 
@@ -146,6 +198,7 @@ const answers: Record<string, unknown> = {
   'GET /api/tickets/1': ticketDetail,
   'GET /api/tasks?status=all': { tasks },
   'GET /api/tasks/3': taskDetail,
+  'GET /api/tasks/6': childDetail,
   'GET /api/activity': {
     items: [{ comment: comments[1], ticket: { id: 1, key: 'AH-1', title: 'Add retries' }, ai_user_id: 'engineer', task_id: 3 }],
     unseen: 2,
@@ -166,7 +219,13 @@ beforeAll(async () => {
   await Promise.all([loadBoot(), loadTickets(), loadTasks(), loadActivity()])
 })
 
-const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
+const text = (html: string) =>
+  html
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&quot;/g, '"')
+    .replace(/&#x27;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
 
 /** The header's text, as the page shows it. */
 const headerText = () => text(/<header[\s\S]*?<\/header>/.exec(renderToStaticMarkup(<App />))?.[0] ?? '')
@@ -181,7 +240,7 @@ describe('views rendered from contract-shaped data', () => {
   it('loads every list through relative URLs', () => {
     expect(getState().boot?.users).toHaveLength(4)
     expect(getState().tickets).toHaveLength(1)
-    expect(getState().tasks).toHaveLength(3)
+    expect(getState().tasks).toHaveLength(4)
     expect(getState().unseen).toBe(2)
     expect(calls.every((c) => c.url.startsWith('/api/'))).toBe(true)
   })
@@ -289,6 +348,97 @@ describe('views rendered from contract-shaped data', () => {
     const settings = text(renderToStaticMarkup(<SettingsPage />))
     expect(settings).toContain('You are the engineer.')
     expect(settings).toContain('Logged in')
+  })
+})
+
+describe('parent and child tasks', () => {
+  it('shows a child task waiting on its parent, and the parent with its children, on the Tasks page', () => {
+    const page = text(renderToStaticMarkup(<TasksPage />))
+    expect(page).toContain(`AH-1 · DevOps · child of Engineer's task "Retry the webhook sender"`)
+    expect(page).toContain('Waiting on Engineer Profile the retry queue') // the child's own pill
+    expect(page).toContain('Child tasks Waiting on Engineer DevOps') // the parent's row
+    // waiting on an AI user: under All only, not under Running or Waiting on user
+    expect(page).toMatch(/All 3 /)
+    expect(page).toMatch(/Running 1 /)
+    expect(page).toMatch(/Waiting on user 1 /)
+  })
+
+  it('leaves a task waiting on an AI user out of the header count and shows it on the card', async () => {
+    expect(headerText()).toMatch(/Tasks 1(?!\d)/)
+    const saved = answers['GET /api/tickets']
+    try {
+      answers['GET /api/tickets'] = { tickets: [{ ...ticket, task_status: 'waiting_on_user', task_waiting_on: 'engineer' }] }
+      await loadTickets()
+      const card = text(renderToStaticMarkup(<Board />))
+      expect(card).toContain('Waiting on Engineer')
+      expect(card).not.toContain('Waiting on user')
+    } finally {
+      answers['GET /api/tickets'] = saved
+      await loadTickets()
+    }
+  })
+
+  it('lists the children in the parent task dialog and an AI user message as theirs', async () => {
+    openTask(3)
+    await loadTaskDetail()
+    const page = text(renderToStaticMarkup(<TaskDialog />))
+    expect(page).toContain('Child tasks Waiting on Engineer DevOps · Profile the retry queue')
+    expect(page).toContain('DevOps · task 6')
+    expect(page).toContain('Which queue do you mean?')
+    expect(page).not.toContain('Child of')
+  })
+
+  it('shows the parent in the child task dialog and waits on the asker by name', async () => {
+    openTask(6)
+    await loadTaskDetail()
+    const page = text(renderToStaticMarkup(<TaskDialog />))
+    expect(page).toContain('Waiting on Engineer AH-1 · DevOps')
+    expect(page).toContain('Child of Engineer · Retry the webhook sender')
+    expect(page).toContain('Engineer · task 3')
+    expect(page).toContain('waiting for Engineer')
+    expect(page).not.toContain('waiting for your reply')
+  })
+
+  it('shows the child in the ticket dialog Tasks block and under the comment that announces it', async () => {
+    openTicket(1)
+    await loadTicketDetail()
+    const page = text(renderToStaticMarkup(<TicketDialog />))
+    expect(page).toContain("Child of Engineer's task")
+    expect(page).toContain("Created a task for DevOps: Profile the retry queue Waiting on Engineer Open DevOps's task Open task")
+  })
+
+  it('shows a new status of the child everywhere after the tasks topic, without a new mount', async () => {
+    const keys = ['GET /api/tasks?status=all', 'GET /api/tasks/3', 'GET /api/tasks/6', 'GET /api/tickets/1']
+    const saved = keys.map((k) => answers[k])
+    const done = { ...childTask, status: 'done' as const, waiting_on: null }
+    const doneLink = link(done)
+    const parentNow = { ...parentTask, children: [doneLink] }
+    try {
+      answers['GET /api/tasks?status=all'] = { tasks: [parentNow, tasks[1], tasks[2], done] }
+      answers['GET /api/tasks/3'] = { ...taskDetail, children: [doneLink] }
+      answers['GET /api/tasks/6'] = { ...childDetail, ...done }
+      answers['GET /api/tickets/1'] = {
+        ...ticketDetail,
+        tasks: [parentNow, tasks[1], done],
+        comments: comments.map((c) => (c.child_task ? { ...c, child_task: doneLink } : c)),
+      }
+      openTicket(1)
+      openTask(3)
+      refresh('tasks')
+      await vi.waitFor(() => {
+        expect(getState().taskDetail?.children[0]?.status).toBe('done')
+        expect(getState().ticketDetail?.tasks[2]?.status).toBe('done')
+        expect(getState().tasks.find((t) => t.id === 6)?.status).toBe('done')
+      })
+      expect(text(renderToStaticMarkup(<TaskDialog />))).toContain('Child tasks Done DevOps · Profile the retry queue')
+      expect(text(renderToStaticMarkup(<TasksPage />))).toContain('Child tasks Done DevOps')
+      const ticketPage = text(renderToStaticMarkup(<TicketDialog />))
+      expect(ticketPage).toContain("Profile the retry queue Done Open DevOps's task")
+      expect(ticketPage).not.toContain('Waiting on Engineer')
+    } finally {
+      keys.forEach((k, i) => (answers[k] = saved[i]))
+      await Promise.all([loadTasks(), loadTaskDetail(), loadTicketDetail()])
+    }
   })
 })
 

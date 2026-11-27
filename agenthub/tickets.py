@@ -1,7 +1,8 @@
 """Tickets, comments, mentions, handing a ticket or a comment to an AI user's task, Activity.
 
-An AI user has at most one open task on a ticket: assignment and mention both find that task and
-hand it the input, or start a task when there is none (AC4, AC8, AC38, AC45).
+An AI user has at most one open task on a ticket: assignment, mention and a child task created by
+another task's session all find that task and hand it the input, or start a task when there is none
+(AC4, AC8, AC38, AC45). A comment posted by a task that answers to a parent task is not listed in Activity.
 """
 
 from __future__ import annotations
@@ -42,7 +43,7 @@ class Tickets:
         self.hub = hub
         self.db = hub.db
         # "find the AI user's open task on the ticket, else start one" must not interleave
-        self._handing = threading.Lock()
+        self.handing = threading.Lock()
 
     # ================================================================ reading
     def get(self, ticket_id: int) -> dict:
@@ -52,6 +53,8 @@ class Tickets:
         return row
 
     def _view(self, row: dict) -> dict:
+        newest = self.db.one("SELECT * FROM tasks WHERE ticket_id = ? ORDER BY id DESC LIMIT 1", (row["id"],))
+        waiting_on = self.hub.tasks.waiting_on(newest) if newest else None
         return {
             "id": row["id"],
             "key": ticket_key(row["id"]),
@@ -64,7 +67,8 @@ class Tickets:
             "project": row["project"],
             "labels": json.loads(row["labels"] or "[]"),
             "comment_count": self.db.value("SELECT COUNT(*) FROM comments WHERE ticket_id = ?", (row["id"],)),
-            "task_status": self.db.value("SELECT status FROM tasks WHERE ticket_id = ? ORDER BY id DESC LIMIT 1", (row["id"],)),
+            "task_status": newest["status"] if newest else None,
+            "task_waiting_on": waiting_on["ai_user_id"] if waiting_on else None,
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
@@ -78,8 +82,12 @@ class Tickets:
             " WHERE e.comment_id = ? AND e.kind = 'user' ORDER BY e.task_id",
             (c["id"],),
         )
-        started = self.db.all("SELECT id AS task_id, ai_user_id FROM tasks WHERE origin_comment_id = ? ORDER BY id", (c["id"],))
-        return {**c, "delivered_to": delivered, "started": started}
+        started = self.db.all(
+            "SELECT id AS task_id, ai_user_id FROM tasks WHERE origin_comment_id = ? AND origin = 'mention' ORDER BY id", (c["id"],)
+        )
+        child_id = self.db.value("SELECT id FROM tasks WHERE origin_comment_id = ? AND origin = 'ai_user'", (c["id"],))
+        child = self.hub.tasks.ref(child_id) if child_id else None
+        return {**c, "delivered_to": delivered, "started": started, "child_task": child}
 
     def detail(self, ticket_id: int) -> dict:
         """The ticket with its comments, its tasks and their two token totals (AC46, AC47)."""
@@ -177,7 +185,7 @@ class Tickets:
 
     def hand_over(self, ticket: dict, ai: dict) -> tuple[dict, bool]:
         """Give the whole ticket to the AI user: its open task on the ticket, else a new task (AC4, AC45)."""
-        with self._handing:
+        with self.handing:
             task = self.hub.tasks.open_task(ticket["id"], ai["id"])
             if task is None:
                 started = self.hub.tasks.create(
@@ -230,7 +238,7 @@ class Tickets:
             delivered.append(task["id"])
 
         mentioned = self.ai_users_mentioned(comment["body"])
-        with self._handing:
+        with self.handing:
             if mentioned:  # AC8, AC38, AC44: the mentioned AI users and nobody else
                 for ai in mentioned:
                     task = self.hub.tasks.open_task(ticket["id"], ai["id"])
@@ -253,14 +261,21 @@ class Tickets:
                     deliver(task)
         return delivered, started
 
-    def post_ai_comment(self, ticket_id: int, ai_user_id: str, body: str, task_id: int) -> int:
-        """An AI user's message on the ticket (AC6); listed in Activity (AC23)."""
+    def post_ai_comment(self, ticket_id: int, ai_user_id: str, body: str, task_id: int, announces: int | None = None) -> int:
+        """An AI user's message on the ticket (AC6); listed in Activity (AC23) unless the posting task answers
+        to a parent task at this moment. `announces`: the child task this comment announces."""
+        posting = self.hub.tasks.get(task_id)
+        in_activity = 0 if posting and self.hub.tasks.answers_to(posting) else 1
         comment_id = self.db.run(
-            "INSERT INTO comments (ticket_id, author_id, body, task_id, created_at) VALUES (?, ?, ?, ?, ?)",
-            (ticket_id, ai_user_id, body, task_id, now_iso()),
+            "INSERT INTO comments (ticket_id, author_id, body, task_id, created_at, in_activity) VALUES (?, ?, ?, ?, ?, ?)",
+            (ticket_id, ai_user_id, body, task_id, now_iso(), in_activity),
         )
+        if announces:
+            self.db.run("UPDATE tasks SET origin_comment_id = ? WHERE id = ?", (comment_id, announces))
+            self.hub.events.publish("tasks", announces)
         self.hub.events.publish("tickets", ticket_id)
-        self.hub.events.publish("activity", comment_id)
+        if in_activity:
+            self.hub.events.publish("activity", comment_id)
         return comment_id
 
     # ================================================================ inputs
@@ -303,6 +318,17 @@ class Tickets:
             "comment_mention.md",
             key=ticket_key(ticket["id"]), title=ticket["title"], description=ticket["description"] or "(no description)",
             comment=comment["body"], project_block=self._project_block(ticket),
+        )
+
+    def child_task_input(self, ticket: dict | None, asker: dict, parent: dict, request: str) -> str:
+        """The first input of a child task: the request, AgentHub's note on who asked, the ticket as context."""
+        values = {"request": request.strip(), "asker": asker["name"], "parent_id": str(parent["id"])}
+        if ticket is None:
+            return render("child_task_no_ticket.md", **values)
+        return render(
+            "child_task.md", **values,
+            key=ticket_key(ticket["id"]), title=ticket["title"], description=ticket["description"] or "(no description)",
+            project_block=self._project_block(ticket),
         )
 
     # ================================================================ search (the search-history skill, AC31)
@@ -369,10 +395,10 @@ class Tickets:
 
     # ================================================================ Activity
     def activity(self) -> tuple[list[dict], int]:
-        """AI comments, newest first, and how many arrived since Pablo last opened the tab (AC23, AC24)."""
+        """AI comments listed in Activity, newest first, and how many arrived since Pablo last opened the tab (AC23, AC24)."""
         rows = self.db.all(
             "SELECT c.*, k.title AS ticket_title FROM comments c JOIN users u ON u.id = c.author_id"
-            " JOIN tickets k ON k.id = c.ticket_id WHERE u.kind = 'ai' ORDER BY c.id DESC"
+            " JOIN tickets k ON k.id = c.ticket_id WHERE u.kind = 'ai' AND c.in_activity = 1 ORDER BY c.id DESC"
         )
         seen = int(self.db.setting("activity_seen_comment_id") or 0)
         items = []
@@ -388,7 +414,7 @@ class Tickets:
 
     def mark_activity_seen(self) -> int:
         newest = self.db.value(
-            "SELECT MAX(c.id) FROM comments c JOIN users u ON u.id = c.author_id WHERE u.kind = 'ai'"
+            "SELECT MAX(c.id) FROM comments c JOIN users u ON u.id = c.author_id WHERE u.kind = 'ai' AND c.in_activity = 1"
         ) or 0
         self.db.set_setting("activity_seen_comment_id", str(newest))
         self.hub.events.publish("activity")

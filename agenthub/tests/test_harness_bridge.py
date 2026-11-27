@@ -264,3 +264,110 @@ def test_a_running_step_updates_the_usage_before_it_ends(live, env, monkeypatch)
     assert (state["current"], state["steps"]["4"]["status"]) == ("4", "running")
     live.post(f"/api/tasks/{task_id}/stop")
     wait_for(lambda: not live.hub.bridge._alive("usage-feat_1"), 30, "the run to stop")
+
+
+# ---------------------------------------------------------------- a child task's run answers to its parent task
+def _create_child(to, request):
+    return f"agenthub task create --to {to} {shlex.quote(request)}"
+
+
+def _ai_lines(task):
+    return [e for e in task["events"] if e["kind"] == "ai_user"]
+
+
+def _prompts_of(env, handle):
+    return [c["argv"][-1] for c in env.calls() if "--json-schema" in c["argv"] and c["env"].get("AGENTHUB_AI_USER") == handle]
+
+
+def _turns(env, **by_handle):
+    env.scenario(by_ai_user={handle: {"turns": turns} for handle, turns in by_handle.items()})
+
+
+def test_a_child_tasks_gates_go_to_its_parent_whose_reply_releases_them(live, env):
+    # Constraint: AC25 to AC29 and the run parts of AC13 and AC14 — a gate of a child's run goes to the parent task,
+    #             not to Pablo; only the parent's or Pablo's reply releases it; the run's progress note is not sent.
+    # Input: Engineer's task on a demo ticket asks DevOps, whose task starts a run. At GATE 1 the parent first asks
+    #        Pablo, a third task writes to the child, then the parent sends "Approved, go ahead (kumquat).". At GATE 2
+    #        Pablo replies in the child's task.
+    # Expected output: the parent's only line from the child is GATE 1 (naming the gate, the run and the child) and it
+    #                  ran a turn with it; the gate comment is DevOps's and not in Activity; the child waits on Engineer;
+    #                  resume is refused until the parent replied; the decision files hold the parent's and Pablo's words.
+    _turns(env, Engineer=[{"commands": [_create_child("DevOps", "Add a greeting to demo.")], "message": "Asked DevOps.",
+                           "status": "waiting_on_child"}],
+           DevOps=[{"commands": [_start_command("child-feat")], "message": "Started the run."}])
+    ticket = live.ticket("Greeting", "Print hello on start.", assignee="engineer", project="demo", model="haiku")
+    parent_id = ticket["tasks"][0]["id"]
+    child_id = wait_for(lambda: (live.task(parent_id)["children"] or [None])[0], 30, "the child task")["id"]
+    wait_for(lambda: _run_row(live, "child-feat_1") and not live.hub.tasks.is_working(child_id), 60, "the run to start")
+    _turns(env, Engineer=[{"message": "DevOps's run is at GATE 1. Pablo, may it go on?", "status": "waiting_on_user"},
+                          {"commands": [f"agenthub task send {child_id} 'Approved, go ahead (kumquat).'"],
+                           "message": "Passed the approval on.", "status": "waiting_on_child"}],
+           DevOps=[{"commands": ["agenthub harness resume child-feat_1"], "message": "Resumed the run."}])
+
+    gate = _wait_gate(live, "child-feat_1", "7")
+    lines = wait_for(lambda: _ai_lines(live.task(parent_id)), 30, "the gate in the parent")
+    wait_for(lambda: not live.hub.tasks.is_working(parent_id), 30, "the parent's turn")
+    assert len(_ai_lines(live.task(parent_id))) == 1  # AC29: "Started the run." was not sent
+    text = lines[0]["text"]
+    assert lines[0]["from_task"] == {"task_id": child_id, "ai_user_id": "devops"}
+    assert "GATE 1" in text and "child-feat_1" in text and f"child task {child_id}" in text
+    assert _prompts_of(env, "Engineer")[-1].startswith(f"Message from DevOps (task {child_id}):")
+    comment = [c for c in live.get(f"/api/tickets/{ticket['id']}")["comments"] if "child-feat_1" in c["body"]][-1]
+    assert comment["author_id"] == "devops" and comment["in_activity"] == 0
+    assert f"until Engineer answers from task {parent_id}, or Pablo replies in this task" in comment["body"]
+    assert comment["id"] not in [i["comment"]["id"] for i in live.get("/api/activity")["items"]]
+    child = live.task(child_id)
+    assert (child["status"], child["waiting_on"]) == ("waiting_on_user", {"task_id": parent_id, "ai_user_id": "engineer"})
+
+    # AC27: the decision file says answered, but neither the parent nor Pablo wrote; a third task's line does not count
+    subprocess.run([sys.executable, str(ANSWER), str(live.config.layout().run_dir("child-feat_1")), "Approved."], check=True)
+    with pytest.raises(BridgeRefused, match=f"only a reply of Engineer \\(task {parent_id}\\) or of Pablo"):
+        live.hub.bridge.resume(live.hub.tasks.get(child_id), "child-feat_1")
+    third = live.post("/api/tasks", {"ai_user_id": "data_scientist", "message": "x", "model": "opus"})
+    live.wait_task(third["id"])
+    live.hub.tasks.add_event(child_id, "ai_user", "Approved by a stranger.", from_task_id=third["id"])
+    with pytest.raises(BridgeRefused):
+        live.hub.bridge.resume(live.hub.tasks.get(child_id), "child-feat_1")
+    assert _run_row(live, "child-feat_1")["pending_kind"] == "gate"
+
+    # AC26: Pablo tells the parent; the parent's reply reaches the child with the gate's instructions and releases it
+    live.post(f"/api/tasks/{parent_id}/messages", {"text": "Yes, approve it."})
+    gate2 = _wait_gate(live, "child-feat_1", "19", timeout=180)
+    child_prompt = _prompts_of(env, "DevOps")[-1]
+    assert child_prompt.startswith(f"The reply of Engineer (task {parent_id}) below answers the pending gate")
+    assert f"Message from Engineer (task {parent_id}):\n\nApproved, go ahead (kumquat)." in child_prompt
+    decision = Path(gate["pending_decision_file"]).read_text()
+    assert "## Reply of the parent task (verbatim)" in decision
+    assert f"From Engineer, task {parent_id}:\n\nApproved, go ahead (kumquat)." in decision
+    assert "## Human reply (verbatim)" not in decision and "stranger" not in decision
+
+    # AC28: at GATE 2, Pablo's own reply in the child's task releases it
+    wait_for(lambda: len(_ai_lines(live.task(parent_id))) >= 2, 30, "GATE 2 in the parent")
+    live.wait_idle()
+    _turns(env, DevOps=[{"commands": [_answer_command(live, "child-feat_1", "Approved by Pablo.")], "message": "Resumed."}])
+    live.post(f"/api/tasks/{child_id}/messages", {"text": "Ship it (persimmon)."})
+    decision2 = Path(gate2["pending_decision_file"])
+    wait_for(lambda: "## Human reply (verbatim)\n\nShip it (persimmon)." in decision2.read_text(), 60, "Pablo's reply")
+    wait_for(lambda: _run_row(live, "child-feat_1")["status"] not in ("running", "paused"), 180, "the run to end")
+    wait_for(lambda: not live.hub.tasks._active, 30, "the turns to end")
+
+
+def test_a_question_of_a_childs_run_goes_to_the_parent(live, env):
+    # Constraint: AC9 (run part) — the run's question reaches the child worded for its parent task, and the child's
+    #             turn that ends waiting_on_user with the run paused goes to the parent.
+    # Input: the child's run stops at a context question (harness fake: not_reproduced); DevOps asks for the value.
+    # Expected output: the child's notice names Engineer's task, not Pablo; the parent has the child's question.
+    Path(env.vars["FAKE_CLAUDE_SCENARIO"]).write_text(json.dumps({"context_status": ["not_reproduced"]}))
+    _turns(env, Engineer=[{"commands": [_create_child("DevOps", "Fix the filter.")], "message": "Asked DevOps.",
+                           "status": "waiting_on_child"}],
+           DevOps=[{"commands": [_start_command("question-child")], "message": "Started the run."},
+                   {"message": "The run asks which filter value reproduces the issue. Which one?", "status": "waiting_on_user"}])
+    ticket = live.ticket("Question", "body", assignee="engineer", project="demo")
+    parent_id = ticket["tasks"][0]["id"]
+    child_id = wait_for(lambda: (live.task(parent_id)["children"] or [None])[0], 30, "the child task")["id"]
+    line = wait_for(lambda: _ai_lines(live.task(parent_id)), 180, "the question in the parent")[0]
+    assert line["from_task"]["task_id"] == child_id and line["text"].startswith("The run asks which filter value")
+    notice = next(e["text"] for e in live.task(child_id)["events"] if e["kind"] == "notice" and "paused with a question" in e["text"])
+    assert f"asking Engineer (task {parent_id}, the task that gave you this work) the question" in notice
+    assert "waiting on Pablo" not in notice
+    wait_for(lambda: not live.hub.tasks._active, 30, "the turns to end")

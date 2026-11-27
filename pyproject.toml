@@ -26,7 +26,7 @@ build-backend = "setuptools.build_meta"
 include = ["agenthub*", "harness*"]
 
 [tool.setuptools.package-data]
-agenthub = ["schema.sql", "prompts/*.md", "prompts/*/*.md"]
+agenthub = ["schema.sql", "migrations/*.sql", "prompts/*.md", "prompts/*/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["harness/tests", "agenthub/tests"]

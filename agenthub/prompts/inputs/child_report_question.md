@@ -1,0 +1,1 @@
+$child_name asks this from child task $child_id and waits for your answer: answer with `agenthub task send $child_id "<answer>"`, yourself when Pablo's ticket, comments or messages already settle it; otherwise ask Pablo first and pass his answer on.

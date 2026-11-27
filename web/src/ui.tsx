@@ -10,11 +10,11 @@ import {
 } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { Task, TaskStatus, User } from './api'
+import type { Task, TaskLink, TaskStatus, User } from './api'
 import { formatDuration, formatTokens, taskElapsed } from './lib/format'
 import { parts } from './lib/mentions'
-import { serverNow } from './store'
-import { color, dark, font, input, statusLook } from './theme'
+import { serverNow, userName } from './store'
+import { color, dark, font, input, statusLook, waitingOnAiLook } from './theme'
 
 // ---- time ----------------------------------------------------------------------------------
 
@@ -121,8 +121,10 @@ export function Avatar({
   )
 }
 
-export function StatusPill({ status, small = false }: { status: TaskStatus; small?: boolean }) {
-  const look = statusLook[status] ?? statusLook.done
+/** `waitingOn`: the name of the AI user a waiting task waits on; without it a waiting task waits on Pablo. */
+export function StatusPill({ status, small = false, waitingOn }: { status: TaskStatus; small?: boolean; waitingOn?: string }) {
+  const onAiUser = status === 'waiting_on_user' && waitingOn !== undefined
+  const look = onAiUser ? waitingOnAiLook : (statusLook[status] ?? statusLook.done)
   return (
     <span
       style={{
@@ -149,9 +151,15 @@ export function StatusPill({ status, small = false }: { status: TaskStatus; smal
           animation: status === 'running' ? 'wb-pulse 1.4s ease-in-out infinite' : 'none',
         }}
       />
-      {look.label}
+      {onAiUser ? `Waiting on ${waitingOn}` : look.label}
     </span>
   )
+}
+
+/** The pill of a task, "Waiting on <AI user>" included. */
+export function TaskStatusPill({ task, small = false }: { task: Pick<TaskLink, 'status' | 'waiting_on'>; small?: boolean }) {
+  const waitingOn = task.waiting_on ? userName(task.waiting_on.ai_user_id) : undefined
+  return <StatusPill status={task.status} small={small} waitingOn={waitingOn} />
 }
 
 // ---- controls ------------------------------------------------------------------------------

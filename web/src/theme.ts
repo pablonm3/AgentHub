@@ -61,6 +61,9 @@ export const statusLook: Record<TaskStatus, StatusLook> = {
   archived: { label: 'Archived', bg: '#F1F2F5', fg: '#5A6272', dot: '#A3ACBD' },
 }
 
+/** A waiting task whose answer comes from another AI user's task, not from Pablo; the label names that AI user. */
+export const waitingOnAiLook: StatusLook = { label: 'Waiting on AI user', bg: '#EEE8FB', fg: '#5A2FA6', dot: '#7C4DDB' }
+
 export const sectionHeading = {
   margin: 0,
   fontSize: 12,

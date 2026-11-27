@@ -1,6 +1,6 @@
 ---
 name: coding-harness
-description: Start and follow a run of AgentHub's coding harness — the feature workflow (spec, plan, build, tests, reviews, report) for work that changes a project's code, or the research workflow `research-v1` (web context, simulations in notebooks or programs, a reviewed final report); relay its gates to Pablo, answer or surface its questions, resume it. Use when a task needs a project's code changed through the full workflow, or a research run Pablo asked for or that needs simulations, never for a small question.
+description: Start and follow a run of AgentHub's coding harness — the feature workflow (spec, plan, build, tests, reviews, report) for work that changes a project's code, or the research workflow `research-v1` (web context, simulations in notebooks or programs, a reviewed final report); relay its gates to Pablo (or, in a task another AI user created, to that task), answer or surface its questions, resume it. Use when a task needs a project's code changed through the full workflow, or a research run Pablo asked for or that needs simulations, never for a small question.
 ---
 
 # Running AgentHub's coding harness from a task
@@ -60,7 +60,8 @@ just registered from the "New project" form is not ready; AgentHub refuses a run
 
    (`--project <name>` only for a task without a ticket; a research run adds `--workflow research-v1`,
    see below.) The command prints the run id and its folder.
-3. End your turn: tell Pablo in your message that run `<run id>` started and what it will do. The
+3. End your turn: tell whoever gave you the task (Pablo, or the task another AI user created this
+   one from) in your message that run `<run id>` started and what it will do. The
    task stays running while the run works. `agenthub harness status` shows the runs of this task,
    their current step, the pending question and their token use.
 
@@ -91,11 +92,19 @@ just registered from the "New project" form is not ready; AgentHub refuses a run
    project setup fails. It changes no code, makes no commit and pushes no branch: every file it
    writes stays in its run folder.
 
-## Gates: only Pablo releases them
+## Gates: only Pablo releases them (or the task that gave you this work)
 
 At GATE 1 (spec and plan review) and GATE 2 (result review) of a `feature-v1` run (a research run
 has no gate), AgentHub itself posts the gate's message as your comment on the ticket and sets the
 task waiting on Pablo. You do nothing until he replies.
+
+**In a task another AI user created** (its first message says who asked, from which task), AgentHub
+also sends the gate's message to that task, and the task waits on that AI user instead of Pablo.
+Its reply reaches you as `Message from <AI user> (task <id>)`, with the decision file and the gate's
+instructions as Pablo's reply would: where they say "the human" or "Pablo", that reply is the answer
+to record. Record it and resume as below; AgentHub appends it verbatim under `## Reply of the parent
+task (verbatim)`. Pablo's own reply in your task releases the gate too. A message from any other
+task does not.
 
 His reply reaches you with the gate's decision file and the gate's own instructions (the copy's
 `plan` chat rules at GATE 1, `final-report` rules at GATE 2). Then:
@@ -106,22 +115,25 @@ His reply reaches you with the gate's decision file and the gate's own instructi
 2. If he asked for a change of the spec, the plan or the ticket copy, write it as the next version in
    the run folder (`spec_<feature>_<n>_v<k+1>.md`, a plan change also its `plan_short_…_v<k+1>.md`),
    never in place, and only what he approved.
-3. `agenthub harness resume <run id>`. AgentHub refuses it until Pablo has replied after the gate.
+3. `agenthub harness resume <run id>`. AgentHub refuses it until Pablo (or, in a task another AI user
+   created, that task) has replied after the gate.
 
 ## Other questions of the run
 
 When the run pauses with a question that is not a gate (setup failed, the context could not be
 reproduced, triage found a spec problem), AgentHub hands it to you as a notice with the decision file.
 
-- Answer it yourself only when Pablo's ticket, comments or messages already answer it: record the
+- Answer it yourself only when Pablo's ticket, comments or messages already answer it (in a task
+  another AI user created: the request, the ticket or the messages you were given): record the
   answer as above and resume. The question and your answer stay in this task's chat.
-- Otherwise ask Pablo in your reply, quoting the question verbatim, and end the turn `waiting_on_user`.
-  When he answers, record and resume.
+- Otherwise ask whoever gave you the task (Pablo, or the task another AI user created this one from)
+  in your reply, quoting the question verbatim, and end the turn `waiting_on_user`. When the answer
+  arrives, record and resume.
 
 ## When the run ends
 
 AgentHub tells you with a notice: done (with the final report's path), failed or blocked (with the
-error and the transcripts). Summarise for Pablo with links to the run files
+error and the transcripts). Summarise for whoever gave you the task with links to the run files
 (`$AGENTHUB_URL/runs/<run id>/files/<file name>`) and end the turn. Share every artifact meant for
 Pablo, of any workflow, as such a link served by AgentHub, never through another host or channel;
 these links have the same access rules as the board.

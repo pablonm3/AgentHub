@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { api, type Task, type TaskStatus, type User } from './api'
 import NewTaskForm from './NewTaskForm'
-import { applyTaskDetail, findUser, notifyOnFailure, openTask, runInBackground, useAppState } from './store'
+import { listRank, waitsOnPablo } from './lib/taskStatus'
+import { applyTaskDetail, findUser, notifyOnFailure, openTask, runInBackground, useAppState, userName } from './store'
 import { color, font, pageTitle } from './theme'
-import { Avatar, Button, ChevronIcon, EditableTitle, EmptyState, PlusIcon, StatusPill, Timer, TokenCounts } from './ui'
+import { Avatar, Button, ChevronIcon, EditableTitle, EmptyState, PlusIcon, TaskStatusPill, Timer, TokenCounts } from './ui'
 
 type Filter = 'all' | TaskStatus
 
@@ -15,12 +16,12 @@ const FILTERS: Array<[Filter, string]> = [
   ['archived', 'Archived'],
 ]
 
-// Waiting on Pablo first, as in the prototype; newest first inside each group.
-const RANK: Record<TaskStatus, number> = { waiting_on_user: 0, running: 1, done: 2, archived: 3 }
-
 function matches(task: Task, filter: Filter): boolean {
   // "All" is every task that is not archived; archived ones only show under their own filter.
-  return filter === 'all' ? task.status !== 'archived' : task.status === filter
+  if (filter === 'all') return task.status !== 'archived'
+  // A task waiting on another AI user is neither waiting on Pablo nor running: it shows under "All" only.
+  if (filter === 'waiting_on_user') return waitsOnPablo(task)
+  return task.status === filter
 }
 
 export default function TasksPage() {
@@ -32,7 +33,8 @@ export default function TasksPage() {
   const rows = tasks
     .filter((t) => matches(t, filter))
     .map((t, i) => ({ t, i }))
-    .sort((a, b) => RANK[a.t.status] - RANK[b.t.status] || a.i - b.i)
+    // Waiting on Pablo first, as in the prototype; newest first inside each group.
+    .sort((a, b) => listRank(a.t) - listRank(b.t) || a.i - b.i)
     .map(({ t }) => t)
 
   return (
@@ -151,7 +153,7 @@ function TaskRow({ task, user }: { task: Task; user: User | undefined }) {
       }}
     >
       <span style={{ flex: '0 0 150px', display: 'flex' }}>
-        <StatusPill status={task.status} />
+        <TaskStatusPill task={task} />
       </span>
       <span style={{ flex: '2 1 260px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
         <span style={{ fontSize: 15, lineHeight: '20px', fontWeight: 600 }}>
@@ -174,7 +176,19 @@ function TaskRow({ task, user }: { task: Task; user: User | undefined }) {
         >
           <Avatar user={user} size={18} ring="none" />
           {task.ticket_key ?? 'No ticket'} · {user?.name ?? task.ai_user_id}
+          {task.parent && ` · child of ${userName(task.parent.ai_user_id)}'s task "${task.parent.display_title}"`}
         </span>
+        {(task.children ?? []).length > 0 && (
+          <span style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 10px', color: color.muted, fontSize: 12, lineHeight: '16px' }}>
+            Child tasks
+            {(task.children ?? []).map((child) => (
+              <span key={child.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                <TaskStatusPill task={child} small />
+                {userName(child.ai_user_id)}
+              </span>
+            ))}
+          </span>
+        )}
         {task.status_reason && (
           <span
             title={task.status_reason}

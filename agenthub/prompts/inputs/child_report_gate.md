@@ -1,0 +1,1 @@
+The harness run of child task $child_id ($child_name) waits at this gate, and your reply releases it: answer with `agenthub task send $child_id "<answer>"`, yourself when Pablo's ticket, comments or messages already settle it; otherwise ask Pablo first and pass his answer on. Pablo's reply in task $child_id releases it too.

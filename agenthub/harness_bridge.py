@@ -3,7 +3,8 @@ guarded resume, the runs' token counts (AC26–AC29, AC40, AC41) and the usage f
 
 A run lasts hours and a turn is a process that ends, so the server owns the run: it spawns
 `agenthub-harness run` in its own process group, reads the run's `state.json` while it lives and
-acts when it exits. A gate is posted as a comment by code; the run resumes only after Pablo replied.
+acts when it exits. A gate is posted as a comment by code; the run resumes only after Pablo replied,
+or, for a task that answers to a parent task, after that parent task replied (`_answers_gate`).
 """
 
 from __future__ import annotations
@@ -224,13 +225,13 @@ class HarnessBridge:
                 "UPDATE harness_runs SET pending_kind = ?, pending_decision_file = ?, pending_posted_at = ? WHERE run_id = ?",
                 (pending["kind"], pending["decision_file"], now_iso(), run_id),
             )
-            self.hub.tasks.send(task_id, self._question_notice(run_id, pending), kind="notice")
+            self.hub.tasks.send(task_id, self._question_notice(task, run_id, pending), kind="notice")
         elif status == "done":
             report = self._newest(run_id, "final_report")
             self.hub.tasks.send(
                 task_id,
                 f"Harness run {run_id} finished. Final report: {report or 'none written'}. "
-                "Summarise the result for Pablo, with links to the run files, and end the turn done.",
+                f"Summarise the result for {self._reader(task)}, with links to the run files, and end the turn done.",
                 kind="notice",
             )
         elif status in ("failed", "blocked"):
@@ -239,33 +240,64 @@ class HarnessBridge:
             self.hub.tasks.send(
                 task_id,
                 f"Harness run {run_id} ended {status}: {error}. Step transcripts: {transcript}. "
-                "Tell Pablo what happened and what you propose.",
+                f"Tell {self._reader(task)} what happened and what you propose.",
                 kind="notice",
             )
         self.hub.tasks.settle(task_id)
         self.hub.events.publish("tasks", task_id)
 
-    def _question_notice(self, run_id: str, pending: dict) -> str:
+    def _reader(self, task: dict) -> str:
+        """Who reads the task's message: Pablo, or the parent task the task answers to."""
+        parent = self.hub.tasks.answers_to(task)
+        if parent is None:
+            return "Pablo"
+        return f"{self.db.user(parent['ai_user_id'])['name']} (task {parent['id']}, the task that gave you this work)"
+
+    def _question_notice(self, task: dict, run_id: str, pending: dict) -> str:
+        record = (
+            "record the answer in the decision file (`## Answer`, frontmatter `answered: true`) and run "
+            f"`agenthub harness resume {run_id}`"
+        )
+        if self.hub.tasks.answers_to(task) is None:
+            what_to_do = (
+                f"Answer it yourself only if Pablo's ticket or comments already answer it: {record}. "
+                "Otherwise end the turn waiting on Pablo, asking him the question in your message."
+            )
+        else:
+            reader = self._reader(task)
+            what_to_do = (
+                f"Answer it yourself only if the request, the ticket or the messages you were given already answer it: "
+                f"{record}. Otherwise end the turn `waiting_on_user`, asking {reader} the question in your message; "
+                "its answer reaches you as a message, then record it and resume."
+            )
         return (
             f"Harness run {run_id} paused with a question ({pending['kind']}, step {pending['step']}): "
             f"{pending.get('reason') or ''}\n\n{pending['question']}\n\n"
             f"Decision file: {pending['decision_file']}\n\n"
-            "Answer it yourself only if Pablo's ticket or comments already answer it: record the answer in the "
-            "decision file (`## Answer`, frontmatter `answered: true`) and run `agenthub harness resume "
-            f"{run_id}`. Otherwise end the turn waiting on Pablo, asking him the question in your message.\n\n"
+            f"{what_to_do}\n\n"
             f"The harness's own instructions for this question:\n\n{pending.get('chat_prompt') or ''}"
         )
 
     def _post_gate(self, task: dict, run_id: str, pending: dict) -> None:
-        """The gate's message as a comment by the AI user, quoted verbatim, with links (AC28). No model turn."""
+        """The gate's message as a comment by the AI user, quoted verbatim, with links (AC28). No model turn.
+        For a task that answers to a parent task, the same message also goes to the parent (AC25)."""
         decision = Path(pending["decision_file"])
         links = self._file_links(run_id, pending["question"])
         ai = self.db.user(task["ai_user_id"])
         quoted = "\n".join(f"> {line}" if line else ">" for line in pending["question"].strip().splitlines())
+        parent = self.hub.tasks.answers_to(task)
+        if parent is None:
+            who_releases = "The run stays paused until Pablo replies here; the reply is the answer the run receives."
+        else:
+            asker = self.db.user(parent["ai_user_id"])["name"]
+            who_releases = (
+                f"The run stays paused until {asker} answers from task {parent['id']}, or Pablo replies in this task; "
+                "the reply is the answer the run receives."
+            )
         body = (
             f"**{pending.get('reason') or 'Gate'}** of harness run `{run_id}` ({ai['name']}'s task):\n\n{quoted}\n\n"
             + (("Files: " + " · ".join(links) + "\n\n") if links else "")
-            + "The run stays paused until Pablo replies here; the reply is the answer the run receives."
+            + who_releases
         )
         self.db.run(
             "UPDATE harness_runs SET pending_kind = 'gate', pending_decision_file = ?, pending_posted_at = ? WHERE run_id = ?",
@@ -275,6 +307,7 @@ class HarnessBridge:
         if task["ticket_id"]:
             self.hub.tickets.post_ai_comment(task["ticket_id"], task["ai_user_id"], body, task["id"])
         self.hub.tasks.set_waiting(task["id"])
+        self.hub.children.report(task, body, "gate")
 
     def _file_links(self, run_id: str, text: str) -> list[str]:
         run_dir = self.layout.run_dir(run_id)
@@ -310,18 +343,40 @@ class HarnessBridge:
             (task_id,),
         )
 
-    def reply_prefix(self, task_id: int) -> str:
-        """Pablo's reply while a gate is pending reaches the AI user with what to do with it."""
-        gate = self.pending_gate(task_id)
-        if not gate:
+    def _answers_gate(self, task: dict, line: dict) -> bool:
+        """Whether a chat line of the task can release its gate: Pablo's, or one sent by the task's parent task."""
+        if line["kind"] == "user":
+            return True
+        return line["kind"] == "ai_user" and task.get("parent_task_id") is not None and line["from_task_id"] == task["parent_task_id"]
+
+    def reply_prefix(self, task: dict, events: list[dict]) -> str:
+        """A reply to a pending gate reaches the AI user with what to do with it; "" when no line of `events` answers one."""
+        gate = self.pending_gate(task["id"])
+        answering = [e for e in events if self._answers_gate(task, e)] if gate else []
+        if not answering:
             return ""
-        pending = pending_question(self.layout, gate["run_id"]) or {}
-        return (
-            f"Pablo's reply below answers the pending gate of harness run {gate['run_id']} "
-            f"({pending.get('reason') or 'gate'}). Decision file: {gate['pending_decision_file']}. Record his answer "
-            "in that file as the gate's instructions say, then run `agenthub harness resume "
-            f"{gate['run_id']}`.\n\nThe gate's instructions:\n\n{pending.get('chat_prompt') or ''}\n\n---\n\n"
+        run_id = gate["run_id"]
+        pending = pending_question(self.layout, run_id) or {}
+        head = self._gate_reply_head(task, answering, gate, pending.get("reason") or "gate")
+        return f"{head}\n\nThe gate's instructions:\n\n{pending.get('chat_prompt') or ''}\n\n---\n\n"
+
+    def _gate_reply_head(self, task: dict, answering: list[dict], gate: dict, reason: str) -> str:
+        """What the AI user is told to do with replies to its gate: by Pablo only, by the parent only, or by both."""
+        run_id, decision = gate["run_id"], gate["pending_decision_file"]
+        what = f"the pending gate of harness run {run_id} ({reason})"
+        record = f"in that file as the gate's instructions say, then run `agenthub harness resume {run_id}`."
+        by_pablo = [e["kind"] == "user" for e in answering]
+        if all(by_pablo):
+            return f"Pablo's reply below answers {what}. Decision file: {decision}. Record his answer {record}"
+        parent = self.hub.tasks.sender_name(task["parent_task_id"])
+        parent_rule = (
+            f"This task's gates are answered by {parent}, the task that gave you this work: where the gate's "
+            f"instructions say \"the human\" or \"Pablo\", its reply is the answer to record. "
+            f"Decision file: {decision}. Record the answer {record}"
         )
+        if any(by_pablo):
+            return f"{parent}'s and Pablo's replies below answer {what}. {parent_rule}"
+        return f"The reply of {parent} below answers {what}. {parent_rule}"
 
     def has_live_run(self, task_id: int) -> bool:
         return any(
@@ -363,19 +418,34 @@ class HarnessBridge:
         return run_id
 
     def _release_gate(self, task: dict, row: dict, decision: Path) -> dict[str, str]:
-        """Append Pablo's replies since the gate was posted to its decision file; the extra env that releases it."""
+        """Append the replies since the gate was posted to its decision file; the extra env that releases it.
+        Pablo's replies go under their own heading, the parent task's replies under theirs (AC26)."""
         run_id = row["run_id"]
-        replies = self.db.all(
-            "SELECT text FROM task_events WHERE task_id = ? AND kind = 'user' AND turn_id IS NOT NULL"
-            " AND created_at >= ? ORDER BY id",
+        lines = self.db.all(
+            "SELECT kind, text, from_task_id FROM task_events WHERE task_id = ? AND kind IN ('user', 'ai_user')"
+            " AND turn_id IS NOT NULL AND created_at >= ? ORDER BY id",
             (task["id"], row["pending_posted_at"] or ""),
         )
+        replies = [r for r in lines if self._answers_gate(task, r)]
         if not replies:
+            if task.get("parent_task_id"):
+                parent = self.hub.tasks.sender_name(task["parent_task_id"])
+                raise BridgeRefused(
+                    f"run {run_id} waits at a gate: only a reply of {parent} or of Pablo releases it, and neither has "
+                    "written to this task since it was posted"
+                )
             raise BridgeRefused(
                 f"run {run_id} waits at a gate: only Pablo's reply releases it, and he has not replied since it was posted"
             )
+        pablo = [r["text"].strip() for r in replies if r["kind"] == "user"]
+        parent_lines = [r["text"].strip() for r in replies if r["kind"] == "ai_user"]
         with open(decision, "a") as f:
-            f.write("\n## Human reply (verbatim)\n\n" + "\n\n".join(r["text"].strip() for r in replies) + "\n")
+            if pablo:
+                f.write("\n## Human reply (verbatim)\n\n" + "\n\n".join(pablo) + "\n")
+            if parent_lines:
+                parent = self.hub.tasks.get(task["parent_task_id"])
+                sender = f"From {self.db.user(parent['ai_user_id'])['name']}, task {parent['id']}:"
+                f.write("\n## Reply of the parent task (verbatim)\n\n" + sender + "\n\n" + "\n\n".join(parent_lines) + "\n")
         return {"HARNESS_GATE_RELEASE": decision.name}
 
     # ================================================================ status, stop, recovery

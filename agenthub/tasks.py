@@ -1,8 +1,13 @@
 """Task state machine: start, queue, turn end, stop, archive, timer, session tokens, restart recovery.
 
 A task is `running`, `waiting_on_user`, `done` or `archived`; it is open in the first three.
-Messages are stored as chat events; a `user` or `notice` event without a turn is queued and becomes
-part of the next turn. One turn runs at a time per task.
+Messages are stored as chat events; a `user` (Pablo), `ai_user` (another task's AI user) or `notice`
+event without a turn is queued and becomes part of the next turn. One turn runs at a time per task.
+
+A task created by another task's session (origin `ai_user`) has that task as its parent and answers
+to it while the parent is not archived (`answers_to`): its questions and its result go to the parent,
+and while it waits it waits on the parent's AI user, not on Pablo.
+The turn status `waiting_on_child` is stored as `waiting_on_user` with `waiting_on_task_id` set.
 """
 
 from __future__ import annotations
@@ -33,6 +38,8 @@ TOKENS = {"input": "input_tokens", "output": "output_tokens", "cache_creation": 
 TOKEN_SUM = " + ".join(TOKENS.values())
 STOP_GRACE_S = 5
 NO_TURN = -1  # turn_id of an event delivered outside any model turn (system, error, gate events)
+INPUT_KINDS = ("user", "notice", "ai_user")  # the chat events that are a turn's input
+INPUT_KINDS_SQL = "(" + ", ".join(f"'{k}'" for k in INPUT_KINDS) + ")"
 
 
 def token_assignments() -> str:
@@ -43,7 +50,7 @@ TASK_SELECT = f"""
 SELECT t.*, k.title AS ticket_title,
   (SELECT COALESCE(SUM({TOKEN_SUM}), 0) FROM turns WHERE task_id = t.id) AS session_tokens,
   (SELECT COALESCE(SUM({TOKEN_SUM}), 0) FROM harness_runs WHERE task_id = t.id) AS harness_tokens,
-  (SELECT text FROM task_events WHERE task_id = t.id AND kind IN ('user', 'notice') ORDER BY id LIMIT 1) AS first_message
+  (SELECT text FROM task_events WHERE task_id = t.id AND kind IN {INPUT_KINDS_SQL} ORDER BY id LIMIT 1) AS first_message
 FROM tasks t LEFT JOIN tickets k ON k.id = t.ticket_id
 """
 
@@ -67,6 +74,10 @@ def _first_words(text: str | None, n: int = 8) -> str:
     words = " ".join((text or "").split()).split(" ")
     short = " ".join(words[:n])
     return short + ("…" if len(words) > n else "")
+
+
+def _display_title(row: dict) -> str:
+    return row["title"] or row["ticket_title"] or _first_words(row["first_message"]) or f"Task {row['id']}"
 
 
 class Tasks:
@@ -93,6 +104,38 @@ class Tasks:
     def is_working(self, task_id: int) -> bool:
         return task_id in self._active
 
+    def answers_to(self, task: dict) -> dict | None:
+        """The parent task a task answers to: its parent, unless it has none or the parent is archived."""
+        if not task.get("parent_task_id"):
+            return None
+        parent = self.get(task["parent_task_id"])
+        return parent if parent and parent["status"] != "archived" else None
+
+    def waiting_on(self, row: dict) -> dict | None:
+        """The task a waiting task waits on; None when it waits on Pablo or is not waiting."""
+        if row["status"] != "waiting_on_user":
+            return None
+        if row["waiting_on_task_id"] and (child := self.get(row["waiting_on_task_id"])):
+            return {"task_id": child["id"], "ai_user_id": child["ai_user_id"]}  # the parent said waiting_on_child
+        if parent := self.answers_to(row):
+            return {"task_id": parent["id"], "ai_user_id": parent["ai_user_id"]}  # a waiting child waits on its parent
+        return None
+
+    def ref(self, task_id: int) -> dict | None:
+        """How a task is named where another task, a comment or a ticket points at it."""
+        row = self.db.one(TASK_SELECT + " WHERE t.id = ?", (task_id,))
+        return self._ref(row) if row else None
+
+    def _ref(self, row: dict) -> dict:
+        return {
+            "id": row["id"],
+            "ai_user_id": row["ai_user_id"],
+            "title": row["title"],
+            "display_title": _display_title(row),
+            "status": row["status"],
+            "waiting_on": self.waiting_on(row),
+        }
+
     def _view(self, row: dict) -> dict:
         title = row["title"]
         runs = self.db.all(
@@ -109,10 +152,13 @@ class Tasks:
             "origin_comment_id": row["origin_comment_id"],
             "title": title,
             "title_source": row["title_source"],
-            "display_title": title or row["ticket_title"] or _first_words(row["first_message"]) or f"Task {row['id']}",
+            "display_title": _display_title(row),
             "model": row["model"],
             "status": row["status"],
             "status_reason": row["status_reason"],
+            "waiting_on": self.waiting_on(row),
+            "parent": self.ref(row["parent_task_id"]) if row["parent_task_id"] else None,
+            "children": [self._ref(r) for r in self.db.all(TASK_SELECT + " WHERE t.parent_task_id = ? ORDER BY t.id", (row["id"],))],
             "open": row["status"] in OPEN,
             "session_id": row["session_id"],
             "running_ms": row["running_ms"],
@@ -149,7 +195,11 @@ class Tasks:
         return [self._view(r) for r in self.db.all(TASK_SELECT + " WHERE t.ticket_id = ? ORDER BY t.id", (ticket_id,))]
 
     def events_of(self, task_id: int) -> list[dict]:
-        rows = self.db.all("SELECT * FROM task_events WHERE task_id = ? ORDER BY id", (task_id,))
+        rows = self.db.all(
+            "SELECT e.*, f.ai_user_id AS from_ai_user_id FROM task_events e LEFT JOIN tasks f ON f.id = e.from_task_id"
+            " WHERE e.task_id = ? ORDER BY e.id",
+            (task_id,),
+        )
         return [
             {
                 "id": e["id"],
@@ -157,7 +207,8 @@ class Tasks:
                 "text": e["text"],
                 "created_at": e["created_at"],
                 "comment_id": e["comment_id"],
-                "queued": e["turn_id"] is None and e["kind"] in ("user", "notice"),
+                "from_task": {"task_id": e["from_task_id"], "ai_user_id": e["from_ai_user_id"]} if e["from_task_id"] else None,
+                "queued": e["turn_id"] is None and e["kind"] in INPUT_KINDS,
             }
             for e in rows
         ]
@@ -172,7 +223,9 @@ class Tasks:
         origin: str = "manual",
         origin_comment_id: int | None = None,
         first_kind: str = "user",
+        parent_task_id: int | None = None,
     ) -> dict:
+        """With `first_kind="ai_user"` the first message is stored as sent by the parent task."""
         ai = self.db.user(ai_user_id)
         if not ai or ai["kind"] != "ai":
             raise HubError("a task needs an AI user", 422)
@@ -185,13 +238,15 @@ class Tasks:
             try:
                 with self.db.transaction() as conn:
                     task_id = conn.execute(
-                        "INSERT INTO tasks (ticket_id, ai_user_id, origin, origin_comment_id, model, status, system_prompt, token,"
-                        " running_ms, running_since, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'running', ?, ?, 0, ?, ?, ?)",
-                        (ticket_id, ai_user_id, origin, origin_comment_id, model, system_prompt, secrets.token_urlsafe(24), now_ms(), now, now),
+                        "INSERT INTO tasks (ticket_id, ai_user_id, origin, origin_comment_id, parent_task_id, model, status,"
+                        " system_prompt, token, running_ms, running_since, created_at, updated_at)"
+                        " VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, 0, ?, ?, ?)",
+                        (ticket_id, ai_user_id, origin, origin_comment_id, parent_task_id, model, system_prompt,
+                         secrets.token_urlsafe(24), now_ms(), now, now),
                     ).lastrowid
                     conn.execute(
-                        "INSERT INTO task_events (task_id, kind, text, created_at) VALUES (?, ?, ?, ?)",
-                        (task_id, first_kind, first_message, now),
+                        "INSERT INTO task_events (task_id, kind, text, created_at, from_task_id) VALUES (?, ?, ?, ?, ?)",
+                        (task_id, first_kind, first_message, now, parent_task_id if first_kind == "ai_user" else None),
                     )
             except sqlite3.IntegrityError:
                 raise HubError(f"{ai['name']} already has an open task on this ticket", 409)
@@ -199,15 +254,16 @@ class Tasks:
         self._publish(task_id)
         return self.view(task_id)
 
-    def send(self, task_id: int, text: str, kind: str = "user", comment_id: int | None = None) -> dict:
-        """Deliver a message: queued while a turn runs, else it starts the next turn (AC15)."""
+    def send(self, task_id: int, text: str, kind: str = "user", comment_id: int | None = None, from_task_id: int | None = None) -> dict:
+        """Deliver a message: queued while a turn runs, else it starts the next turn (AC15).
+        `from_task_id`: the task that sends an `ai_user` message."""
         if not text.strip():
             raise HubError("the message is empty", 422)
         with self.lock:
             task = self._require(task_id)
             if task["status"] == "archived":
                 raise HubError("this task is archived and takes no further messages", 409)
-            self.add_event(task_id, kind, text, comment_id=comment_id, queued=True)
+            self.add_event(task_id, kind, text, comment_id=comment_id, queued=True, from_task_id=from_task_id)
             if task["status"] != "running":  # also while a stopped turn is still finishing
                 self._set_status(task_id, "running", reason=None)
             if task_id not in self._active:
@@ -294,13 +350,16 @@ class Tasks:
                 self._set_status(task_id, "waiting_on_user", reason=None)
         self._publish(task_id)
 
-    def add_event(self, task_id: int, kind: str, text: str, comment_id: int | None = None, queued: bool = False, turn_id: int | None = None) -> int:
-        """`queued` user/notice events have no turn yet; every other event is stored as delivered (NO_TURN when none)."""
+    def add_event(
+        self, task_id: int, kind: str, text: str, comment_id: int | None = None, queued: bool = False,
+        turn_id: int | None = None, from_task_id: int | None = None,
+    ) -> int:
+        """`queued` input events have no turn yet; every other event is stored as delivered (NO_TURN when none)."""
         if not queued and turn_id is None:
             turn_id = NO_TURN
         event_id = self.db.run(
-            "INSERT INTO task_events (task_id, turn_id, comment_id, kind, text, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (task_id, None if queued else turn_id, comment_id, kind, text, now_iso()),
+            "INSERT INTO task_events (task_id, turn_id, comment_id, kind, text, created_at, from_task_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (task_id, None if queued else turn_id, comment_id, kind, text, now_iso(), from_task_id),
         )
         self.hub.events.publish("tasks", task_id)
         return event_id
@@ -308,7 +367,7 @@ class Tasks:
     # ================================================================ turns
     def _queued(self, task_id: int) -> list[dict]:
         return self.db.all(
-            "SELECT * FROM task_events WHERE task_id = ? AND turn_id IS NULL AND kind IN ('user', 'notice') ORDER BY id",
+            f"SELECT * FROM task_events WHERE task_id = ? AND turn_id IS NULL AND kind IN {INPUT_KINDS_SQL} ORDER BY id",
             (task_id,),
         )
 
@@ -352,21 +411,34 @@ class Tasks:
         for e in events:
             if e["kind"] == "user":
                 head = f"Pablo commented on ticket {key}:" if e["comment_id"] and key else "Message from Pablo:"
+            elif e["kind"] == "ai_user":
+                head = f"Message from {self.sender_name(e['from_task_id'])}:"
             else:
                 head = "From AgentHub:"
             parts.append(f"{head}\n\n{e['text'].strip()}")
-        prefix = self.hub.bridge.reply_prefix(task["id"]) if any(e["kind"] == "user" for e in events) else ""
-        return prefix + "\n\n---\n\n".join(parts)
+        return self.hub.bridge.reply_prefix(task, events) + "\n\n---\n\n".join(parts)
+
+    def sender_name(self, task_id: int | None) -> str:
+        """`DevOps (task 14)`: how a message from another task names its sender."""
+        sender = self.get(task_id) if task_id else None
+        if sender is None:
+            return "another AI user"
+        return f"{self.db.user(sender['ai_user_id'])['name']} (task {sender['id']})"
 
     def _history_prompt(self, task_id: int, turn_id: int, prompt: str) -> str:
         """First message of a replacement session: the task's earlier conversation from the database."""
+        kinds = "(" + ", ".join(f"'{k}'" for k in (*INPUT_KINDS, "reply")) + ")"
         rows = self.db.all(
-            "SELECT kind, text FROM task_events WHERE task_id = ? AND kind IN ('user', 'notice', 'reply') AND turn_id IS NOT NULL"
+            f"SELECT kind, text, from_task_id FROM task_events WHERE task_id = ? AND kind IN {kinds} AND turn_id IS NOT NULL"
             " AND turn_id <> ? ORDER BY id",
             (task_id, turn_id),
         )
         who = {"user": "Pablo", "notice": "AgentHub", "reply": "You"}
-        history = "\n\n".join(f"[{who[r['kind']]}]\n{r['text'].strip()}" for r in rows)
+
+        def speaker(r: dict) -> str:
+            return self.sender_name(r["from_task_id"]) if r["kind"] == "ai_user" else who[r["kind"]]
+
+        history = "\n\n".join(f"[{speaker(r)}]\n{r['text'].strip()}" for r in rows)
         return (
             "Your earlier session of this task could not be continued, so this is a new session. "
             "The conversation of the task so far:\n\n" + history + "\n\n--- New input ---\n\n" + prompt
@@ -453,19 +525,21 @@ class Tasks:
                 self.db.run("UPDATE tasks SET session_id = ? WHERE id = ?", (session_id, task_id))
             structured = outcome.structured
             reason = None
+            reply = ""
             if not active.stopped:
                 if outcome.ok:
                     message = structured["message"] if structured else (active.texts[-1] if active.texts else outcome.result_text)
-                    message = self.hub.reports.with_report_links(task_id, active.started_ms, message or "")
-                    if message.strip():
-                        self.add_event(task_id, "reply", message.strip(), turn_id=active.turn_id)
+                    reply = self.hub.reports.with_report_links(task_id, active.started_ms, message or "").strip()
+                    if reply:
+                        self.add_event(task_id, "reply", reply, turn_id=active.turn_id)
                         if task["ticket_id"]:
-                            self.hub.tickets.post_ai_comment(task["ticket_id"], task["ai_user_id"], message.strip(), task_id)
+                            self.hub.tickets.post_ai_comment(task["ticket_id"], task["ai_user_id"], reply, task_id)
                     if structured and structured["title"] and not task["title"]:
                         self.set_ai_title(task_id, structured["title"])
                 else:
                     reason = outcome.error or "the turn failed"
                     self.add_event(task_id, "error", reason, turn_id=active.turn_id)
+            parent_hears = self._what_parent_hears(task_id, active, outcome, structured, reply)
         task = self.get(task_id)
         sync = self.hub.private.sync(f"task {task_id} ({self.db.user(task['ai_user_id'])['name']}): {task['title'] or ''}".strip())
         if sync.error:
@@ -474,9 +548,24 @@ class Tasks:
         with self.lock:
             self._active.pop(task_id, None)
             self._next_status_after_turn(task_id, active, outcome, structured, reason)
+        if parent_hears:
+            self.hub.children.report(self.get(task_id), reply, parent_hears)
         self._publish(task_id)
         self.hub.events.publish("tickets")
         self.hub.events.publish("activity")
+
+    def _what_parent_hears(self, task_id: int, active: ActiveTurn, outcome: TurnOutcome, structured: dict | None, reply: str) -> str | None:
+        """What this turn's message is for the task's parent: `question`, `result` or nothing. Called with the lock held."""
+        if not reply or active.stopped or not outcome.ok:
+            return None  # a stopped or failed turn tells nobody
+        if self.hub.bridge.has_live_run(task_id):
+            return None  # a progress note while the task's harness run works
+        stated = structured["status"] if structured else "waiting_on_user"  # the status the turn ends with
+        if stated == "waiting_on_user" or self.hub.bridge.pending_gate(task_id):
+            return "question"  # a task cannot be done while its gate waits
+        if stated == "done":
+            return "result"
+        return None  # waiting_on_child: a progress note, not sent
 
     def _next_status_after_turn(self, task_id: int, active: ActiveTurn, outcome: TurnOutcome, structured: dict | None, reason: str | None) -> None:
         """Pick the task's status once its turn has ended. Called with the lock held."""
@@ -495,11 +584,23 @@ class Tasks:
         else:
             # the AI user's own choice, or waiting on Pablo after a failed turn
             status = structured["status"] if (outcome.ok and structured) else "waiting_on_user"
-            self._set_status(task_id, status, reason=reason)
+            if status == "waiting_on_child":
+                self._set_status(task_id, "waiting_on_user", reason=reason, waiting_on=self._pending_child(task_id))
+            else:
+                self._set_status(task_id, status, reason=reason)
+
+    def _pending_child(self, task_id: int) -> int | None:
+        """The newest child still at work: running, or waiting on a child of its own."""
+        return self.db.value(
+            "SELECT id FROM tasks WHERE parent_task_id = ?"
+            " AND (status = 'running' OR (status = 'waiting_on_user' AND waiting_on_task_id IS NOT NULL)) ORDER BY id DESC LIMIT 1",
+            (task_id,),
+        )
 
     # ================================================================ status and timer
-    def _set_status(self, task_id: int, status: str, reason: str | None) -> None:
-        """Change the status; the timer runs only while the status is running (AC12)."""
+    def _set_status(self, task_id: int, status: str, reason: str | None, waiting_on: int | None = None) -> None:
+        """Change the status; the timer runs only while the status is running (AC12).
+        `waiting_on`: the child a waiting parent said it waits for; any other change clears it."""
         task = self.get(task_id)
         now = now_ms()
         running_ms, since = task["running_ms"], task["running_since"]
@@ -511,8 +612,9 @@ class Tasks:
         elif task["status"] != "running" or since is None:
             since = now
         self.db.run(
-            "UPDATE tasks SET status = ?, status_reason = ?, running_ms = ?, running_since = ?, updated_at = ? WHERE id = ?",
-            (status, reason, running_ms, since, now_iso(), task_id),
+            "UPDATE tasks SET status = ?, status_reason = ?, waiting_on_task_id = ?, running_ms = ?, running_since = ?, updated_at = ?"
+            " WHERE id = ?",
+            (status, reason, waiting_on, running_ms, since, now_iso(), task_id),
         )
 
     def recover(self, live_task_ids: set[int] | None = None) -> None:
