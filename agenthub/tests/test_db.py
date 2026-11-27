@@ -89,7 +89,7 @@ def test_a_database_from_before_project_chosen_counts_every_ticket_as_chosen(tmp
 
 
 def test_a_version_2_file_without_project_chosen_gets_the_column(tmp_path):
-    # the installed database's shape: another branch moved it past version 1 without adding the column
+    # files exist past version 1 without the column, so user_version cannot decide the migration
     path = tmp_path / "a.db"
     _file_without_project_chosen(path, version=2)
 

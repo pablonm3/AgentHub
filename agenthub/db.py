@@ -47,7 +47,7 @@ class Database:
             self._seed(conn)
             conn.execute(f"PRAGMA user_version = {VERSION}")
         else:
-            self._ensure_project_chosen_column()  # runs on every open; a no-op once the column exists
+            self._ensure_project_chosen_column()
 
     def _ensure_project_chosen_column(self) -> None:
         """Add tickets.project_chosen to an existing file that lacks it (its tickets count as chosen, default 1).
