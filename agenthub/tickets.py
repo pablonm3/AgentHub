@@ -112,7 +112,8 @@ class Tickets:
             raise HubError("unknown assignee", 422)
         model = data.get("model") or self.db.setting("default_model")
         check_model(self.hub.config, model)
-        project_name, chosen, warning = self._resolve_project(data)
+        chosen = data.get("project_chosen") is not False
+        project_name, warning = self._resolve_project(data)
         now = now_iso()
         position = (self.db.value("SELECT MAX(position) FROM tickets WHERE stage = ?", (stage,)) or 0) + 1
         ticket_id = self.db.run(
@@ -126,22 +127,22 @@ class Tickets:
             self.hand_over(self.get(ticket_id), assignee)
         return self.detail(ticket_id), warning
 
-    def _resolve_project(self, data: dict) -> tuple[str | None, bool, str | None]:
-        """The ticket's project name, whether a project was chosen, and a registration warning; registers a new project first."""
+    def _resolve_project(self, data: dict) -> tuple[str | None, str | None]:
+        """The ticket's project name and a registration warning; registers a new project first."""
         # exactly one of: "project" (a registered name, or null for "No project"), "new_project",
         # or "project_chosen": false (nothing picked yet)
         has_project, has_new = "project" in data, data.get("new_project") is not None
         not_chosen = data.get("project_chosen") is False
-        if has_project + has_new + not_chosen != 1:
+        if sum((has_project, has_new, not_chosen)) != 1:
             raise HubError('choose exactly one of a registered project, "No project" (project: null), a new project '
                            'or no choice yet (project_chosen: false)', 422)
         if not_chosen:
-            return None, False, None
+            return None, None
         if has_new:
             new = data["new_project"] or {}
             project, warning = self.hub.projects.register(str(new.get("name") or ""), new.get("repo_url"))
-            return project["name"], True, warning
-        return self._registered_project(data["project"]), True, None
+            return project["name"], warning
+        return self._registered_project(data["project"]), None
 
     def _registered_project(self, name: str | None) -> str | None:
         """The name when it is registered, None for "No project"; any other name is refused."""
@@ -188,11 +189,12 @@ class Tickets:
                 (*fields.values(), ticket_id),
             )
             self.hub.events.publish("tickets", ticket_id)
-        assignee = new_assignee or self.db.user(ticket["assignee_id"])
-        # an AI assignee is handed the ticket when it becomes the assignee or when the project is set,
-        # and never before a project is chosen
-        if (ticket["project_chosen"] or picked) and (new_assignee is not None or picked) and assignee["kind"] == "ai":
-            self.hand_over(self.get(ticket_id), assignee)
+        chosen_now = ticket["project_chosen"] or picked
+        trigger = new_assignee is not None or picked
+        if chosen_now and trigger:
+            assignee = new_assignee or self.db.user(ticket["assignee_id"])
+            if assignee["kind"] == "ai":
+                self.hand_over(self.get(ticket_id), assignee)
         return self.detail(ticket_id)
 
     def hand_over(self, ticket: dict, ai: dict) -> tuple[dict, bool]:
